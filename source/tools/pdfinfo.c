@@ -282,6 +282,7 @@ gatherfonts(fz_context *ctx, globals *glo, int page, pdf_obj *pageref, pdf_obj *
 		glo->font[glo->fonts - 1].pageobj = pageobj;
 		glo->font[glo->fonts - 1].u.font.obj = fontdict;
 		glo->font[glo->fonts - 1].u.font.subtype = subtype;
+		glo->font[glo->fonts - 1].u.font.encoding = encoding;
 		glo->font[glo->fonts - 1].u.font.name = basefont ? basefont : name;
 	}
 }
