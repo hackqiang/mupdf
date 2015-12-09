@@ -36,6 +36,7 @@ struct info
 			pdf_obj *obj;
 			pdf_obj *subtype;
 			pdf_obj *name;
+			pdf_obj *encoding;
 		} font;
 		struct {
 			pdf_obj *obj;
@@ -251,6 +252,7 @@ gatherfonts(fz_context *ctx, globals *glo, int page, pdf_obj *pageref, pdf_obj *
 		pdf_obj *subtype = NULL;
 		pdf_obj *basefont = NULL;
 		pdf_obj *name = NULL;
+		pdf_obj *encoding = NULL;
 		int k;
 
 		fontdict = pdf_dict_get_val(ctx, dict, i);
@@ -259,7 +261,7 @@ gatherfonts(fz_context *ctx, globals *glo, int page, pdf_obj *pageref, pdf_obj *
 			fz_warn(ctx, "not a font dict (%d %d R)", pdf_to_num(ctx, fontdict), pdf_to_gen(ctx, fontdict));
 			continue;
 		}
-
+		encoding = pdf_dict_get(ctx, fontdict, PDF_NAME_Encoding);
 		subtype = pdf_dict_get(ctx, fontdict, PDF_NAME_Subtype);
 		basefont = pdf_dict_get(ctx, fontdict, PDF_NAME_BaseFont);
 		if (!basefont || pdf_is_null(ctx, basefont))
@@ -692,11 +694,12 @@ printinfo(fz_context *ctx, globals *glo, char *filename, int show, int page)
 		fz_printf(ctx, out, "Fonts (%d):\n", glo->fonts);
 		for (i = 0; i < glo->fonts; i++)
 		{
-			fz_printf(ctx, out, PAGE_FMT "%s '%s' (%d %d R)\n",
+			fz_printf(ctx, out, PAGE_FMT "%s\t%s\t%s (%d %d R)\n",
 				glo->font[i].page,
 				pdf_to_num(ctx, glo->font[i].pageref),
 				pdf_to_gen(ctx, glo->font[i].pageref),
 				pdf_to_name(ctx, glo->font[i].u.font.subtype),
+				pdf_to_name(ctx, glo->font[i].u.font.encoding),
 				pdf_to_name(ctx, glo->font[i].u.font.name),
 				pdf_to_num(ctx, glo->font[i].u.font.obj),
 				pdf_to_gen(ctx, glo->font[i].u.font.obj));
