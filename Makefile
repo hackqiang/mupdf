@@ -304,13 +304,14 @@ INSTALL_APPS := $(MUTOOL) $(MUVIEW) $(MUJSTEST) $(MUVIEW_CURL)
 
 # --- Examples ---
 
-examples: $(OUT)/example $(OUT)/multi-threaded
+examples: $(OUT)/example $(OUT)/multi-threaded $(OUT)/outline-test
 
 $(OUT)/example: docs/example.c $(MUPDF_LIB) $(THIRD_LIBS)
 	$(LINK_CMD) $(CFLAGS)
 $(OUT)/multi-threaded: docs/multi-threaded.c $(MUPDF_LIB) $(THIRD_LIBS)
 	$(LINK_CMD) $(CFLAGS) -lpthread
-
+$(OUT)/outline-test: docs/outline-test.c $(MUPDF_LIB) $(THIRD_LIBS)
+	$(LINK_CMD) $(CFLAGS)
 # --- Update version string header ---
 
 VERSION = $(shell git describe --tags)
