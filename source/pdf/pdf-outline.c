@@ -166,6 +166,27 @@ int print_unicode(int *unicode, int len)
     return 0;
 }
 
+char *unicode_to_utf8(int *unicode, char *utf8, int len)
+{
+    int pos;
+    
+    if(len==0)
+        while(*(unicode+len)) len++;
+    
+    memset(utf8, 0, len);
+    int off = 0;
+    for (pos = 0; pos < len && unicode[pos]; pos++)
+    {
+        char temp[4] = {0};
+        int ret = fz_runetochar(temp,unicode[pos]);
+        //printf("%s", temp);
+        memcpy(utf8+off, temp, ret);
+        off += ret;
+    }
+    
+    return utf8;
+}
+
 // size < MAX_KEYWORD_LEN
 static int uni[MAX_KEYWORD_LEN/4] = {0};
 int *tounicode(char *utf8)
@@ -304,12 +325,19 @@ int parse_chapter_info(fz_context *ctx, fz_document *doc, int *txt, int len)
         j++;
     }
     
+    char *utf8 = (char *)malloc(128);
+    if(!utf8)
+    {
+        printf("malloc error\n");
+        return -1;
+    }
+    
     if(!first_node)
     {
         first_node = fz_new_outline(ctx);
-        //todo 
-        //first_node->title = unicode_to_utf8(ctx, doc, text);
-        //first_node->dest = 
+        first_node->title = unicode_to_utf8(text,utf8,128);
+        //todo first_node->dest = 
+        printf("%s<->", first_node->title);
     }
     else
     {
@@ -317,13 +345,11 @@ int parse_chapter_info(fz_context *ctx, fz_document *doc, int *txt, int len)
         while(p->next) p = p->next;
         fz_outline *node = fz_new_outline(ctx);
         p->next = node;
-        //todo 
-        //first_node->title = unicode_to_utf8(ctx, doc, text);
-        //first_node->dest = 
+        node->title = unicode_to_utf8(text,utf8,128);
+        printf("%s<->", node->title);
+        //todo first_node->dest = 
     }
     
-    print_unicode(text,num+1);
-    printf("<->");
     //part2
     printf("%d\n", unicode2int(new_chapter+num+1));
 
@@ -396,149 +422,6 @@ int fix_page_offset()
 {
     return 0;
 }
-
-/*
-int write_new_pdf(fz_context *ctx, fz_document *doc)
-{  
-    //0
-    int objn = pdf_count_objects(ctx,doc);
-    int page_offset = fix_page_offset();
-    
-    printf("total %d objs, page offset %d\n", objn, page_offset);
-    
-    char *inputfile = "out.pdf";
-	int fd_in = open(inputfile, O_RDONLY);
-	if(fd_in<0)
-	{
-		printf("open %s error\n", inputfile);
-		return -1;
-	}
-    char outputfile[256] = {0};
-    strcat(outputfile, inputfile);
-    strcat(outputfile, ".out.pdf");
-	int fd_out = open(outputfile, O_RDWR | O_CREAT);
-	if(fd_out<0)
-	{
-		printf("open %s error\n", outputfile);
-		return -1;
-	} 
-    
-	lseek(fd_in, 0, SEEK_SET);
-	char c;
-	int flag = 0;
-	while(read(fd_in,&c,1)==1)
-	{
-        //get /Catalog 0x20 [0x0d]
-        if(c=='C')
-        {
-            write(fd_out, &c, 1);
-            
-            char buf[6] = {0};
-            if(read(fd_in, buf, 6)!=6)
-            {
-                printf("read error\n");
-                return -1;
-            }
-            if(!memcmp(buf,"atalog",6))
-            {
-                write(fd_out, buf, 6);
-                //1
-                printf("got Catalog\n");
-                char wbuf[32] = {0};
-                sprintf(wbuf, "\n/Outlines %d 0 R \n", objn);
-                write(fd_out, wbuf, strlen(wbuf));
-                write(fd_out, "/PageMode /UseOutlines\n", strlen("/PageMode /UseOutlines\n"));
-                flag = 1;
-            }
-            else
-            {
-                lseek(fd_in, -6, SEEK_CUR);
-            }
-        }
-        else if (c == 'e' && flag)
-        {
-            write(fd_out, &c, 1);
-            char buf[6] = {0};
-            if(read(fd_in, buf, 6)!=6)
-            {
-                printf("read error\n");
-                return -1;
-            }
-
-            if(!memcmp(buf,"ndobj",5))
-            {
-                write(fd_out, buf, 6);
-                printf("got endobj\n");
-                char wbuf[256] = {0};
-                //2
-                sprintf(wbuf, "\n%d 0 obj \n", objn);
-                write(fd_out, wbuf, strlen(wbuf));
-
-
-                memset(wbuf,0,256);
-                sprintf(wbuf, "<<\n/Count %d \n/First %d 0 R \n/Last %d 0 R\n>>\nendobj \n", outline_root.total, objn+1, objn+outline_root.total);
-                write(fd_out, wbuf, strlen(wbuf));
-
-                //3
-                //todo: outline_root.total==1
-                int index = 1;
-                outline_tree *p = outline_root.next;
-                while(p!=NULL) 
-                {
-                    memset(wbuf,0,256);
-                    sprintf(wbuf, "%d 0 obj \n", objn+index);
-                    write(fd_out, wbuf, strlen(wbuf));
-                    
-                    write(fd_out, "<<\n/Title (", strlen("<<\n/Title ("));
-                    
-                    //write unicode of text
-                    printf("add ");
-                    print_unicode(p->text,0);
-                    printf(" %d\n", p->pagen);
-                    
-                    write_unicode(fd_out, p->text);
-                    
-                    memset(wbuf,0,256);
-                    if(index == 1)
-                    {
-                        sprintf(wbuf, ")\n/Dest [%d /Fit]\n/Parent %d 0 R \n/Next %d 0 R \n>>\nendobj\n", 
-                                        p->pagen + page_offset, objn, objn+index+1);
-                    }
-                    else if(index == outline_root.total)
-                    {
-                        sprintf(wbuf, ")\n/Dest [%d /Fit]\n/Parent %d 0 R \n/Prev %d 0 R \n>>\nendobj\n", 
-                                        p->pagen + page_offset, objn, objn+index-1);
-                    }
-                    else
-                    {
-                        sprintf(wbuf, ")\n/Dest [%d /Fit]\n/Parent %d 0 R \n/Next %d 0 R \n/Prev %d 0 R \n>>\nendobj\n", 
-                                        p->pagen, objn, objn+index+1, objn+index-1);
-                    }
-                    write(fd_out, wbuf, strlen(wbuf));
-                    
-                    
-                    p = p->next;
-                    index++;
-                }
-                
-                flag = 0;
-            }
-            else
-            {
-                lseek(fd_in, -6, SEEK_CUR);
-            }
-        }
-        else
-        {
-            write(fd_out, &c, 1);
-        }
-	}
-
-	close(fd_in);
-	close(fd_out);
-    return 0;
-}
-*/
 
 fz_outline *
 pdf_load_outline_fixed(fz_context *ctx, fz_document *doc)

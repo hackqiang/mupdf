@@ -46,7 +46,7 @@ int main(int argc, char **argv)
     if(outline)
     {
         printf("get outline success\n");
-        fz_drop_outline(ctx, outline);S
+        fz_drop_outline(ctx, outline);
     }
 
 	fz_drop_document(ctx, doc);
