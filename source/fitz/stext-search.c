@@ -158,6 +158,10 @@ fz_search_text_page(fz_context *ctx, fz_text_page *text, const char *needle, fz_
 						fz_union_rect(&linebox, &charbox);
 					}
 				}
+				else
+				{
+					printf("fz_is_empty_rect :(\n");
+				}
 			}
 			if (!fz_is_empty_rect(&linebox) && hit_count < hit_max)
 				hit_bbox[hit_count++] = linebox;
