@@ -46,6 +46,10 @@ int main(int argc, char **argv)
     if(outline)
     {
         printf("get outline success\n");
+        
+        //for debug only, should not use.
+        write_outline_to_new_pdf(inputfile, ctx, doc, outline);
+        
         fz_drop_outline(ctx, outline);
     }
 

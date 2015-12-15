@@ -76,11 +76,18 @@ pdf_load_outline(fz_context *ctx, pdf_document *doc)
 }
 
 
-//////////////////
-#define SERACH_MAX_PAGE 20
+/*
+ *   add outlines by parse contects pages 
+ */
+
+//#define DUMP_DEBUG_PRINT
+#define DEBUG_PRINT printf
+
+#define SERACH_MAX_PAGE 24
 #define MAX_KEYWORD_LEN 128
 #define KEYWORKS_NUM 128
-//must be utf8
+#define MAX_CHAPTER_LEN 128 //char *
+//must encode as utf8
 static char content_keywords[KEYWORKS_NUM][MAX_KEYWORD_LEN] = 
 {
     "目 录",
@@ -102,13 +109,10 @@ static char chapter_keywords[KEYWORKS_NUM][MAX_KEYWORD_LEN] =
 {
     "Chapter",
     "chapter",
-    //"第一章", //do not care for now
-    //"第1章",
-    //"第 1 章",
     "第",
 };
 
-fz_outline *first_node = NULL;
+static fz_outline *first_node = NULL;
 
 //get form mupdf code
 static int textlen(fz_context *ctx, fz_text_page *page)
@@ -137,7 +141,7 @@ static int textlen(fz_context *ctx, fz_text_page *page)
 	return len;
 }
 
-int unicode2int(int *unicode)
+static int unicode_to_int(int *unicode)
 {
     int num = 0;
     int pos=0;
@@ -149,98 +153,7 @@ int unicode2int(int *unicode)
     return num;
 }
 
-int print_unicode(int *unicode, int len)
-{
-    int pos;
-    
-    if(len==0)
-        while(*(unicode+len)) len++;
-    
-    for (pos = 0; pos < len && unicode[pos]; pos++)
-    {
-        char temp[4] = {0};
-        fz_runetochar(temp,unicode[pos]);
-        printf("%s", temp);
-    }
-    
-    return 0;
-}
-
-char *unicode_to_utf8(int *unicode, char *utf8, int len)
-{
-    int pos;
-    
-    if(len==0)
-        while(*(unicode+len)) len++;
-    
-    memset(utf8, 0, len);
-    int off = 0;
-    for (pos = 0; pos < len && unicode[pos]; pos++)
-    {
-        char temp[4] = {0};
-        int ret = fz_runetochar(temp,unicode[pos]);
-        //printf("%s", temp);
-        memcpy(utf8+off, temp, ret);
-        off += ret;
-    }
-    
-    return utf8;
-}
-
-// size < MAX_KEYWORD_LEN
-static int uni[MAX_KEYWORD_LEN/4] = {0};
-int *tounicode(char *utf8)
-{
-    int *unicode = uni;
-    memset(unicode, 0, MAX_KEYWORD_LEN);
-    while (*utf8)
-    {
-        utf8 += fz_chartorune(unicode++, (char *)utf8);
-    }
-    return uni;
-}
-
-int *new_text_form_page_number(fz_context *ctx, fz_document *doc, int page)
-{
-    int pos;
-    printf("begin page%d text\n", page);
-    
-    fz_text_sheet *sheet = fz_new_text_sheet(ctx);
-    fz_text_page *text = fz_new_text_page_from_page_number(ctx, doc, page, sheet);
-    
-    int len = textlen(ctx, text);
-    int *tbuf = (int *)malloc(sizeof(int)*(len+1));
-    if(!tbuf) {
-        fprintf(stderr, "malloc %d error\n", len+1);
-        return NULL;
-    }
-    memset(tbuf,0,sizeof(int)*(len+1));
-
-    for(pos = 0; pos < len; pos++)
-    {
-        fz_char_and_box cab;
-        tbuf[pos] = fz_text_char_at(ctx, &cab, text, pos)->c;
-        char ww[4];
-        fz_runetochar(ww,tbuf[pos]);
-#ifdef DUMP_DEBUG
-        if(!(pos%16)) printf("\n");
-        printf("%08x ", tbuf[pos]);
-#endif
-    }
-#ifdef DUMP_DEBUG
-    printf("\n");
-#endif
-    return tbuf;
-}
-
-void free_text(int *text)
-{
-    if(text)
-        free(text);
-}
-
-
-char *unicode2utf8(int *unicode, char *utf8, int ulen)
+static char *unicode_to_utf8(int *unicode, char *utf8, int utf8len)
 {
     int pos;
     int ui = 0;
@@ -252,7 +165,7 @@ char *unicode2utf8(int *unicode, char *utf8, int ulen)
         
         char temp[4] = {0};
         int ret = fz_runetochar(temp,unicode[pos]);
-        if(ui+ret>ulen)
+        if(ui+ret>utf8len)
         {
             break;
         }
@@ -262,153 +175,253 @@ char *unicode2utf8(int *unicode, char *utf8, int ulen)
     return utf8;
 }
 
-
-/*分析一条章节信息，应该是类似于：
-    第一章　连环奸杀案／003 
-    第二章　设下诡局／018
-    Chapter 1 .......................................... 1  
-    Chapter 2 .......................................... 5
-*/
-int parse_chapter_info(fz_context *ctx, fz_document *doc, int *txt, int len)
+static void print_unicode(int *unicode, int len)
 {
-    int pos = 0, i=0;
+    int pos;
+    if(len==0)
+        while(*(unicode+len)) len++;
+    
+    for (pos = 0; pos < len && unicode[pos]; pos++)
+    {
+        char temp[4] = {0};
+        fz_runetochar(temp,unicode[pos]);
+        printf("%s", temp);
+    }
+}
+
+static int *new_text_form_page_number(fz_context *ctx, fz_document *doc, int start_page, int total_page)
+{
+    int i;
+    int pos;
+    int len = 0;
+    int *textbuf = NULL;
+    
+    for(i = start_page; i < start_page + total_page; i++)
+    {
+        DEBUG_PRINT("get page%d text\n", i);
+        
+        fz_text_sheet *sheet = fz_new_text_sheet(ctx);
+        fz_text_page *text = fz_new_text_page_from_page_number(ctx, doc, i, sheet);
+        int tlen = textlen(ctx, text);
+        
+        textbuf = (int *)realloc(textbuf, sizeof(int)*(len + tlen+1));
+        if(!textbuf) {
+            DEBUG_PRINT("malloc %d error\n", len+1);
+            return NULL;
+        }
+        memset(textbuf+len,0,sizeof(int)*(tlen+1));
+
+        for(pos = 0; pos < tlen; pos++)
+        {
+            fz_char_and_box cab;
+            textbuf[len+pos] = fz_text_char_at(ctx, &cab, text, pos)->c;
+#ifdef DUMP_DEBUG_PRINT
+            if(!(pos%16)) DEBUG_PRINT("\n");
+            DEBUG_PRINT("%04x ", textbuf[len+pos]);
+#endif
+        }
+        fz_drop_text_page(ctx, text);
+        len += tlen;
+#ifdef DUMP_DEBUG_PRINT
+        DEBUG_PRINT("\n");
+#endif
+    }
+    
+    return textbuf;
+}
+
+//free the text form new_text_form_page_number
+static void free_text(int *text)
+{
+    if(text)
+        free(text);
+}
+
+static void print_outline(fz_outline *outline)
+{
+    fz_outline *p = outline;
+    while(p)
+    {
+        DEBUG_PRINT("%s<->%d\n", p->title, p->dest.ld.gotor.page);
+        p = p->next;
+    }
+}
+
+/*
+ *分析一条章节信息，应该是类似于：
+ *  第一章　连环奸杀案／003 
+ *  第二章　设下诡局／018
+ *  Chapter 1 .......................................... 1  
+ *  Chapter 2 .......................................... 5
+ *  只分析前1024个字(int)
+ */
+static int parse_chapter_info(fz_context *ctx, fz_document *doc, int *txt, int len)
+{
+    int pos, i, j;
+    int chapter_buf[1024] = {0};
     
     if(len==0)
         while(*(txt+len)) len++;    
     
-    int *new_chapter = (int *)malloc((len+1)*sizeof(int));
-    if(!new_chapter)
-    {
-        fprintf(stderr, "malloc %lu error\n", (len+1)*sizeof(int));
-        return -1;
-    }
-    memset(new_chapter, 0, (len+1)*sizeof(int));
+    if(len > 1024)
+        len = 1024;
     
     //1. 去掉"." 
+    i = 0;
+    pos = 0;
     while(txt[pos] && pos<len)
     {
         if(txt[pos]!='.')
         {
-            new_chapter[i++] = txt[pos];
+            chapter_buf[i++] = txt[pos];
         }
         pos++;
     }
 
     //2. 去掉末尾非数字字符
-    int j=i-1;
-    while((new_chapter[j]<'0' || new_chapter[j]>'9') && j>=0)
+    j = i - 1;
+    while((chapter_buf[j]<'0' || chapter_buf[j]>'9') && j>=0)
     {
-        new_chapter[j] = 0;
+        chapter_buf[j] = 0;
         j--;
     }
     
-    if(j==-1)
+    if(j == -1)
     {
-        fprintf(stderr, "no page number found\n");
+        printf("ERROR: no page number found\n");
         return -1;
     }
     
     //3. 检测末尾的数字
     int num = j;
-    while(new_chapter[num]>='0' && new_chapter[num]<='9')
+    while(chapter_buf[num] >= '0' && chapter_buf[num] <= '9')
     {
         num--;
     }
 
     //这样，这一段章节信息就可以被分成了两段：
-    //part1
-    j=0;
-    int text[32] = {0};
-    while(j<num+1 && j<31)
+    //part1 章节标题
+    //part2 页数
+    j = 0;
+    int title[MAX_CHAPTER_LEN/4] = {0};
+    while(j < num + 1 && j<  MAX_CHAPTER_LEN/4 - 1)
     {
-        text[j] = new_chapter[j];
+        title[j] = chapter_buf[j];
         j++;
     }
     
-    char *utf8 = (char *)malloc(128);
-    if(!utf8)
+    //4. 过滤掉章节标题末尾的符号(" ", "/", "／ 0xff0f")
+    j--;
+    while(j>0)
     {
-        printf("malloc error\n");
-        return -1;
+        if(title[j] == ' ' || title[j] == '/' || title[j] == '\\' || title[j] == 0xff0f)
+        {
+            title[j] = 0;
+            j--;
+        }
+        else
+        {
+            break;
+        }
     }
     
+    char *utf8_title = (char *)malloc(MAX_CHAPTER_LEN);
+    if(!utf8_title)
+    {
+        printf("malloc %d error\n", MAX_CHAPTER_LEN);
+        return -1;
+    }
+    memset(utf8_title, 0, MAX_CHAPTER_LEN);
+
+    fz_outline *node = fz_new_outline(ctx); //already memset 0
+    
+    node->title = unicode_to_utf8(title, utf8_title, MAX_CHAPTER_LEN);
+    
+    node->dest.kind = FZ_LINK_GOTO;
+    node->dest.ld.gotor.flags = fz_link_flag_fit_h | fz_link_flag_fit_v;
+    node->dest.ld.gotor.page = unicode_to_int(chapter_buf+num+1);
+    node->dest.ld.gotor.dest = NULL;
+    //DEBUG_PRINT("%s<->%d\n", first_node->title, first_node->dest.ld.gotor.page);    
+
     if(!first_node)
     {
-        first_node = fz_new_outline(ctx);
-        first_node->title = unicode_to_utf8(text,utf8,128);
-        //todo first_node->dest = 
-        printf("%s<->", first_node->title);
+        first_node = node;
     }
     else
     {
         fz_outline *p = first_node;
         while(p->next) p = p->next;
-        fz_outline *node = fz_new_outline(ctx);
         p->next = node;
-        node->title = unicode_to_utf8(text,utf8,128);
-        printf("%s<->", node->title);
-        //todo first_node->dest = 
     }
-    
-    //part2
-    printf("%d\n", unicode2int(new_chapter+num+1));
 
-    free(new_chapter);
     return 0;
 }
 
-int search(int *text, int *match)
+static int search(int *text, int *match)
 {
+    int i;
     int text_len = 0;
     int match_len = 0;
 
     while(*(text+text_len)) text_len++;
     while(*(match+match_len)) match_len++;
+    //DEBUG_PRINT("search %d %d\n", text_len, match_len);
     
-    //printf("search %d %d\n", text_len, match_len);
-    
-    int p;
-    for(p=0;p<text_len;p++)
+    for(i = 0; i < text_len; i++)
     {
-        if(text[p] == match[0])
+        if(text[i] == match[0])
         {
             int m = 1;
-            while(m<match_len && text[p+m] == match[m]) m++;
-            if(m==match_len)
+            while(m < match_len && text[i + m] == match[m]) m++;
+            if(m == match_len)
             {
-                return p;
+                return i;
             }
         }
     }
     return -1;
 }
 
-int analyse_contents(fz_context *ctx, fz_document *doc, int *text)
+//todo: fix later
+// size < MAX_KEYWORD_LEN
+static int uni[MAX_KEYWORD_LEN/4] = {0};
+static int *utf8_to_unicode(char *utf8)
+{
+    int *unicode = uni;
+    memset(unicode, 0, MAX_KEYWORD_LEN);
+    while (*utf8)
+    {
+        utf8 += fz_chartorune(unicode++, (char *)utf8);
+    }
+    return uni;
+}
+
+static int analyse_contents(fz_context *ctx, fz_document *doc, int *text)
 {
     int j = 0;
-    while(j<KEYWORKS_NUM && chapter_keywords[j][0])
+    while(j < KEYWORKS_NUM && chapter_keywords[j][0])
     {
-        printf("searching %s\n", chapter_keywords[j]);
+        //DEBUG_PRINT("searching %s\n", chapter_keywords[j]);
         int pos = 0;
         int pre_pos = -1;
         int *tt = text;
-        //根据关键字，得到一行行的章节信息
-        while((pos=search(tt, tounicode(chapter_keywords[j])))>=0)
+        //根据关键字，分割得到一行行的章节信息
+        while((pos = search(tt, utf8_to_unicode(chapter_keywords[j]))) >= 0)
         {
-            //printf("get %s %d\n", chapter_keywords[j], pos);
-            if(pre_pos>=0)
+            //DEBUG_PRINT("get %s %d\n", chapter_keywords[j], pos);
+            if(pre_pos >= 0)
             {
-                //printf("%d\n",pos);
-                parse_chapter_info(ctx,doc,tt-1,pos);
+                //DEBUG_PRINT("%d\n",pos);
+                parse_chapter_info(ctx, doc, tt - 1, pos);
             }
-            tt+=pos;
+            tt += pos;
             tt++;
             pre_pos = pos;
         }
         if(pre_pos>=0)
         {
             //最后一段
-            parse_chapter_info(ctx,doc,tt-1,0);
+            parse_chapter_info(ctx, doc, tt - 1, 0);
             break;
         }
         j++;
@@ -417,60 +430,324 @@ int analyse_contents(fz_context *ctx, fz_document *doc, int *text)
     return 0;
 }
 
-//todo
-int fix_page_offset()
+static int fix_page_offset(fz_context *ctx, fz_document *doc, fz_outline *outline, int content_start_page, int content_total_page)
 {
+    if(!outline)
+    {
+        DEBUG_PRINT("no outline, skip fix offset\n");
+        return 0;
+    }
+    
+    int page_offset;
+    int current_page;
+    fz_rect search_hit_bbox[32];
+    int page_count;
+    
+    page_count = fz_count_pages(ctx, doc);
+    
+    page_offset = 0;
+    for(current_page = content_start_page + content_total_page; current_page < SERACH_MAX_PAGE*2 && current_page < page_count; current_page++)
+    {
+        int count = fz_search_page_number(ctx, doc, current_page, outline->title, search_hit_bbox, 32);
+        if(count)
+        {
+            page_offset = current_page - outline->dest.ld.gotor.page;
+            DEBUG_PRINT("found page%d (%s) %d times, offset %d\n", current_page,outline->title,count,page_offset);
+            break;
+        }
+    }
+    
+    //更新所有的outlines对象
+    if(page_offset)
+    {
+        fz_outline *p = outline;
+        while(p)
+        {
+            p->dest.ld.gotor.page += page_offset;
+            p = p->next;
+        }
+    }
     return 0;
 }
 
-fz_outline *
-pdf_load_outline_fixed(fz_context *ctx, fz_document *doc)
+fz_outline *pdf_load_outline_fixed(fz_context *ctx, fz_document *doc)
 {
-    fz_rect search_hit_bbox[32];
-    int count = 0;
-    int current_page;
-    int j = 0;
-    int *text;
-    int page_count = fz_count_pages(ctx, doc);
+    DEBUG_PRINT("begin pdf_load_outline_fixed\n");
     
-    while(j<KEYWORKS_NUM && content_keywords[j][0] && !count)
+    fz_rect search_hit_bbox[32];
+    int count;
+    int current_page;
+    int index;
+    int *text = NULL;
+    int page_count;
+    int content_start_page = -1, content_total_page = 0;
+    
+    page_count = fz_count_pages(ctx, doc);
+    
+#if 0
+    count = 0;
+    //用目录作为关键字，当目录分页的时候，得到的目录信息不全
+    while(index < KEYWORKS_NUM && content_keywords[index][0] && !count)
     {
         
-        for(current_page=0; current_page<SERACH_MAX_PAGE && current_page<page_count; current_page++)
+        for(current_page=0; current_page < SERACH_MAX_PAGE && current_page < page_count; current_page++)
         {
-            //printf("serach page%d (%s)\n", current_page, content_keywords[j]);
+            //DEBUG_PRINT("serach page%d (%s)\n", current_page, content_keywords[index]);
             /*
              * 有时候，字符虽然是存在pdf中的，用reader也能看到，编码也是OK的，但是用这个API搜索不到，
-             *  debug发现，字符串确实是找到了，但是charbox为空，导致mupdf认为找不到(1c2)... 先不care了...
+             *  DEBUG_PRINT发现，字符串确实是找到了，但是charbox为空，导致mupdf认为找不到(1c2)... 先不care了...
              */
-            count = fz_search_page_number(ctx, doc, current_page, content_keywords[j], search_hit_bbox, 32);
+            count = fz_search_page_number(ctx, doc, current_page, content_keywords[index], search_hit_bbox, 32);
             if(count)
             {
-                printf("found page%d (%s) %d times\n", current_page,content_keywords[j],count);
+                DEBUG_PRINT("found page%d (%s) %d times\n", current_page,content_keywords[index],count);
                 break;
             }
         }
         j++;
     }
-
-    if(count)
+#else
+    //直接使用章节关键字搜索
+    count = 0;
+    for(current_page = 0; current_page < SERACH_MAX_PAGE && current_page < page_count; current_page++)
     {
-        text = new_text_form_page_number(ctx, doc, current_page);
+        index = 0;
+        while(index < KEYWORKS_NUM && chapter_keywords[index][0])
+        {
+            DEBUG_PRINT("serach page%d (%s)\n", current_page, chapter_keywords[index]);
+            count = fz_search_page_number(ctx, doc, current_page, chapter_keywords[index], search_hit_bbox, 32);
+            //简单的认为，关键字数量大于4，就是目录页
+            if(count > 4)
+            {
+                DEBUG_PRINT("found page%d (%s) %d times\n", current_page,chapter_keywords[index],count);
+                if(content_start_page == -1)
+                    content_start_page = current_page;
+                content_total_page++;
+                break;
+            }
+            index++;
+        }
+    }
+#endif
+    
+    //find contents
+    if(content_total_page)
+    {
+        text = new_text_form_page_number(ctx, doc, content_start_page, content_total_page);
         if(!text)
         {
-            fprintf(stderr, "get page%d error\n", current_page);
+            DEBUG_PRINT("get page%d-%d error\n", content_start_page, content_start_page+content_total_page-1);
             return NULL;
         }
+        DEBUG_PRINT("<begin dump text>");
+        print_unicode(text, 0);
+        DEBUG_PRINT("<end dump text>\n");
         
-        // get contents success, begin to analyse
+        //begin to analyse
         analyse_contents(ctx, doc, text);
-        //write_new_pdf(ctx, doc);
+        print_outline(first_node);
+        
+        fix_page_offset(ctx, doc, first_node, content_start_page, content_total_page);
+        print_outline(first_node);
+        
         free_text(text);
         return first_node;
+    }
+    else
+    {
+        //debug, dump all text in pdf
+        DEBUG_PRINT("no contents found, begin to dump all text\n");
+        for(index = 0; index < page_count; index++)
+        {
+            text = new_text_form_page_number(ctx, doc, index, 1);
+            if(!text)
+            {
+                DEBUG_PRINT("get page%d error\n", index);
+                return NULL;
+            }
+            DEBUG_PRINT("<begin dump text>");
+            print_unicode(text, 0);
+            DEBUG_PRINT("<end dump text>\n");
+            free_text(text);
+        }
     }
     
 	return NULL;
 }
 
+static int write_unicode(int fd, int *unicode)
+{
+    char t;
+    int pos;
+    int len = 0;
+    while(*(unicode+len)) len++;
+    
+    //spec: Text String Type need UTF-16BE
+    t = 0xfe;
+    write(fd, &t, 1);
+    t = 0xff;
+    write(fd, &t, 1);
+    
+    for (pos = 0; pos < len; pos++)
+    {
+        if(unicode[pos]<0x10000)
+        {
+            t = (unicode[pos] >> 8) & 0xff;
+            write(fd, &t, 1);
+            t = (unicode[pos]) & 0xff;
+            write(fd, &t, 1);
+        }
+        else
+        {
+            //not verify yet
+            int vh = ((unicode[pos] - 0x10000) & 0xFFC00) >> 10 ;
+            int vl =  (unicode[pos] - 0x10000) & 0x3ff;
+            short h  =  0xD800 | vh;
+            short l =  0xDC00 | vl;
+            write(fd, &h, 2); 
+            write(fd, &l, 2); 
+        }
+    }
+    
+    return 0;
+}
 
+int write_outline_to_new_pdf(char *inputfile, fz_context *ctx, fz_document *doc, fz_outline *outline)
+{
+    char c;
+    char outputfile[256] = {0};
+    strcat(outputfile, inputfile);
+    strcat(outputfile, ".out.pdf");
+    
+    int objn = pdf_count_objects(ctx,(pdf_document *)doc);
+    
+	int fd_in = open(inputfile, O_RDONLY);
+	if(fd_in < 0)
+	{
+		DEBUG_PRINT("open %s error\n", inputfile);
+		return -1;
+	}
 
+	int fd_out = open(outputfile, O_RDWR | O_CREAT);
+	if(fd_out < 0)
+	{
+		DEBUG_PRINT("open %s error\n", outputfile);
+		return -1;
+	} 
+
+    int total_outlines = 0;
+    fz_outline *p = outline;
+    while(p)
+    {
+        total_outlines++;
+        p = p->next;
+    }
+
+	int flag = 0;
+	while(read(fd_in, &c, 1)==1)
+	{
+        //get /Catalog 0x20 [0x0d]
+        if(c == 'C')
+        {
+            write(fd_out, &c, 1);
+            
+            char buf[6] = {0};
+            if(read(fd_in, buf, 6)!=6)
+            {
+                DEBUG_PRINT("read error\n");
+                return -1;
+            }
+            if(!memcmp(buf, "atalog", 6))
+            {
+                write(fd_out, buf, 6);
+                //1
+                DEBUG_PRINT("got Catalog\n");
+                char wbuf[32] = {0};
+                sprintf(wbuf, "\n/Outlines %d 0 R \n", objn);
+                write(fd_out, wbuf, strlen(wbuf));
+                write(fd_out, "/PageMode /UseOutlines\n", strlen("/PageMode /UseOutlines\n"));
+                flag = 1;
+            }
+            else
+            {
+                lseek(fd_in, -6, SEEK_CUR);
+            }
+        }
+        else if (c == 'e' && flag)
+        {
+            write(fd_out, &c, 1);
+            char buf[6] = {0};
+            if(read(fd_in, buf, 6)!=6)
+            {
+                DEBUG_PRINT("read error\n");
+                return -1;
+            }
+
+            if(!memcmp(buf, "ndobj", 5))
+            {
+                write(fd_out, buf, 6);
+                DEBUG_PRINT("got endobj\n");
+                char wbuf[256] = {0};
+                //2
+                sprintf(wbuf, "\n%d 0 obj \n", objn);
+                write(fd_out, wbuf, strlen(wbuf));
+
+                memset(wbuf,0,256);
+                sprintf(wbuf, "<<\n/Count %d \n/First %d 0 R \n/Last %d 0 R\n>>\nendobj \n", total_outlines, objn+1, objn+total_outlines);
+                write(fd_out, wbuf, strlen(wbuf));
+
+                //3
+                int index = 1;
+                p = outline;
+                while(p) 
+                {
+                    memset(wbuf,0,256);
+                    sprintf(wbuf, "%d 0 obj \n", objn+index);
+                    write(fd_out, wbuf, strlen(wbuf));
+
+                    write(fd_out, "<<\n/Title (", strlen("<<\n/Title ("));
+
+                    DEBUG_PRINT("add (");
+                    print_unicode(utf8_to_unicode(p->title),0);
+                    DEBUG_PRINT("<-->%d)\n", p->dest.ld.gotor.page);
+                    //write unicode of text
+                    write_unicode(fd_out, utf8_to_unicode(p->title));
+
+                    memset(wbuf,0,256);
+                    if(index == 1)
+                    {
+                        sprintf(wbuf, ")\n/Dest [%d /Fit]\n/Parent %d 0 R \n/Next %d 0 R \n>>\nendobj\n", 
+                                        p->dest.ld.gotor.page, objn, objn+index+1);
+                    }
+                    else if(index == total_outlines)
+                    {
+                        sprintf(wbuf, ")\n/Dest [%d /Fit]\n/Parent %d 0 R \n/Prev %d 0 R \n>>\nendobj\n", 
+                                        p->dest.ld.gotor.page, objn, objn+index-1);
+                    }
+                    else
+                    {
+                        sprintf(wbuf, ")\n/Dest [%d /Fit]\n/Parent %d 0 R \n/Next %d 0 R \n/Prev %d 0 R \n>>\nendobj\n", 
+                                        p->dest.ld.gotor.page, objn, objn+index+1, objn+index-1);
+                    }
+                    write(fd_out, wbuf, strlen(wbuf));
+
+                    p = p->next;
+                    index++;
+                }
+                flag = 0;
+            }
+            else
+            {
+                lseek(fd_in, -6, SEEK_CUR);
+            }
+        }
+        else
+        {
+            write(fd_out, &c, 1);
+        }
+	}
+
+	close(fd_in);
+	close(fd_out);
+    return 0;
+}
