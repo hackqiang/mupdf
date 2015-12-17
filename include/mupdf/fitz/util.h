@@ -59,4 +59,9 @@ int fz_search_page(fz_context *ctx, fz_page *page, const char *needle, fz_rect *
 int fz_search_page_number(fz_context *ctx, fz_document *doc, int number, const char *needle, fz_rect *hit_bbox, int hit_max);
 int fz_search_display_list(fz_context *ctx, fz_display_list *list, const char *needle, fz_rect *hit_bbox, int hit_max);
 
+/*
+	fz_gen_thumb_image: generate pagen thumbnail image save as outfile
+ */
+int fz_gen_thumb_image(fz_context *ctx, fz_document *doc, int pagenum, int width, char *outfile);
+
 #endif
