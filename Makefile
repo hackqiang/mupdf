@@ -310,7 +310,7 @@ $(OUT)/example: docs/example.c $(MUPDF_LIB) $(THIRD_LIBS)
 	$(LINK_CMD) $(CFLAGS)
 $(OUT)/multi-threaded: docs/multi-threaded.c $(MUPDF_LIB) $(THIRD_LIBS)
 	$(LINK_CMD) $(CFLAGS) -lpthread
-$(OUT)/outline-test: docs/outline-test.c $(MUPDF_LIB) $(THIRD_LIBS)
+$(OUT)/pdf-fix: docs/pdf-fix.c $(MUPDF_LIB) $(THIRD_LIBS)
 	$(LINK_CMD) $(CFLAGS)
 $(OUT)/genthumb-test: docs/genthumb-test.c $(MUPDF_LIB) $(THIRD_LIBS)
 	$(LINK_CMD) $(CFLAGS)

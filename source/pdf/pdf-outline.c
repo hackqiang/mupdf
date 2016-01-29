@@ -75,6 +75,19 @@ pdf_load_outline(fz_context *ctx, pdf_document *doc)
 	return pdf_load_outline_fixed(ctx, (fz_document *)doc);
 }
 
+//em......
+fz_outline *
+pdf_load_outline_origin(fz_context *ctx, pdf_document *doc)
+{
+	pdf_obj *root, *obj, *first;
+
+	root = pdf_dict_get(ctx, pdf_trailer(ctx, doc), PDF_NAME_Root);
+	obj = pdf_dict_get(ctx, root, PDF_NAME_Outlines);
+	first = pdf_dict_get(ctx, obj, PDF_NAME_First);
+	if (first)
+		return pdf_load_outline_imp(ctx, doc, first);
+}
+
 
 /*
  *   add outlines by parse contects pages 
@@ -87,29 +100,13 @@ pdf_load_outline(fz_context *ctx, pdf_document *doc)
 #define MAX_KEYWORD_LEN 128
 #define KEYWORKS_NUM 128
 #define MAX_CHAPTER_LEN 128 //char *
-//must encode as utf8
-static char content_keywords[KEYWORKS_NUM][MAX_KEYWORD_LEN] = 
-{
-    "目 录",
-    "目  录",
-    "目　录",
-    "目!!录",
-    "目录",
-    "content",
-    "CONTENT",
-    "contents",
-    "CONTENTS",
-    "ｃｏｎｔｅｎｔ",
-    "ＣＯＮＴＥＮＴ",
-    "ｃｏｎｔｅｎｔｓ",
-    "ＣＯＮＴＥＮＴＳ",
-};
 
+//must encode as utf8
 static char chapter_keywords[KEYWORKS_NUM][MAX_KEYWORD_LEN] = 
 {
     "Chapter",
     "chapter",
-    "第",
+    {0xE7, 0xAC, 0xAC}//"第",
 };
 
 static fz_outline *first_node = NULL;
@@ -189,6 +186,20 @@ static void print_unicode(int *unicode, int len)
     }
 }
 
+//todo: fix later
+// size < MAX_KEYWORD_LEN
+static int uni[MAX_KEYWORD_LEN/4] = {0};
+static int *utf8_to_unicode(char *utf8)
+{
+    int *unicode = uni;
+    memset(unicode, 0, MAX_KEYWORD_LEN);
+    while (*utf8)
+    {
+        utf8 += fz_chartorune(unicode++, (char *)utf8);
+    }
+    return uni;
+}
+
 static int *new_text_form_page_number(fz_context *ctx, fz_document *doc, int start_page, int total_page)
 {
     int i;
@@ -206,7 +217,7 @@ static int *new_text_form_page_number(fz_context *ctx, fz_document *doc, int sta
         
         textbuf = (int *)realloc(textbuf, sizeof(int)*(len + tlen+1));
         if(!textbuf) {
-            DEBUG_PRINT("malloc %d error\n", len+1);
+            printf("malloc %d error\n", len+1);
             return NULL;
         }
         memset(textbuf+len,0,sizeof(int)*(tlen+1));
@@ -216,14 +227,14 @@ static int *new_text_form_page_number(fz_context *ctx, fz_document *doc, int sta
             fz_char_and_box cab;
             textbuf[len+pos] = fz_text_char_at(ctx, &cab, text, pos)->c;
 #ifdef DUMP_DEBUG_PRINT
-            if(!(pos%16)) DEBUG_PRINT("\n");
-            DEBUG_PRINT("%04x ", textbuf[len+pos]);
+            if(!(pos%16)) printf("\n");
+            printf("%04x ", textbuf[len+pos]);
 #endif
         }
         fz_drop_text_page(ctx, text);
         len += tlen;
 #ifdef DUMP_DEBUG_PRINT
-        DEBUG_PRINT("\n");
+        printf("\n");
 #endif
     }
     
@@ -246,6 +257,7 @@ static void print_outline(fz_outline *outline)
         p = p->next;
     }
 }
+
 
 /*
  *分析一条章节信息，应该是类似于：
@@ -382,20 +394,6 @@ static int search(int *text, int *match)
     return -1;
 }
 
-//todo: fix later
-// size < MAX_KEYWORD_LEN
-static int uni[MAX_KEYWORD_LEN/4] = {0};
-static int *utf8_to_unicode(char *utf8)
-{
-    int *unicode = uni;
-    memset(unicode, 0, MAX_KEYWORD_LEN);
-    while (*utf8)
-    {
-        utf8 += fz_chartorune(unicode++, (char *)utf8);
-    }
-    return uni;
-}
-
 static int analyse_contents(fz_context *ctx, fz_document *doc, int *text)
 {
     int j = 0;
@@ -484,29 +482,6 @@ fz_outline *pdf_load_outline_fixed(fz_context *ctx, fz_document *doc)
     
     page_count = fz_count_pages(ctx, doc);
     
-#if 0
-    count = 0;
-    //用目录作为关键字，当目录分页的时候，得到的目录信息不全
-    while(index < KEYWORKS_NUM && content_keywords[index][0] && !count)
-    {
-        
-        for(current_page=0; current_page < SERACH_MAX_PAGE && current_page < page_count; current_page++)
-        {
-            //DEBUG_PRINT("serach page%d (%s)\n", current_page, content_keywords[index]);
-            /*
-             * 有时候，字符虽然是存在pdf中的，用reader也能看到，编码也是OK的，但是用这个API搜索不到，
-             *  DEBUG_PRINT发现，字符串确实是找到了，但是charbox为空，导致mupdf认为找不到(1c2)... 先不care了...
-             */
-            count = fz_search_page_number(ctx, doc, current_page, content_keywords[index], search_hit_bbox, 32);
-            if(count)
-            {
-                DEBUG_PRINT("found page%d (%s) %d times\n", current_page,content_keywords[index],count);
-                break;
-            }
-        }
-        j++;
-    }
-#else
     //直接使用章节关键字搜索
     count = 0;
     for(current_page = 0; current_page < SERACH_MAX_PAGE && current_page < page_count; current_page++)
@@ -514,12 +489,12 @@ fz_outline *pdf_load_outline_fixed(fz_context *ctx, fz_document *doc)
         index = 0;
         while(index < KEYWORKS_NUM && chapter_keywords[index][0])
         {
-            DEBUG_PRINT("serach page%d (%s)\n", current_page, chapter_keywords[index]);
+            //DEBUG_PRINT("serach page%d (%s)\n", current_page, chapter_keywords[index]);
             count = fz_search_page_number(ctx, doc, current_page, chapter_keywords[index], search_hit_bbox, 32);
             //简单的认为，关键字数量大于4，就是目录页
             if(count > 4)
             {
-                DEBUG_PRINT("found page%d (%s) %d times\n", current_page,chapter_keywords[index],count);
+                //DEBUG_PRINT("found page%d (%s) %d times\n", current_page,chapter_keywords[index],count);
                 if(content_start_page == -1)
                     content_start_page = current_page;
                 content_total_page++;
@@ -528,20 +503,19 @@ fz_outline *pdf_load_outline_fixed(fz_context *ctx, fz_document *doc)
             index++;
         }
     }
-#endif
-    
+
     //find contents
     if(content_total_page)
     {
         text = new_text_form_page_number(ctx, doc, content_start_page, content_total_page);
         if(!text)
         {
-            DEBUG_PRINT("get page%d-%d error\n", content_start_page, content_start_page+content_total_page-1);
+            //DEBUG_PRINT("get page%d-%d error\n", content_start_page, content_start_page+content_total_page-1);
             return NULL;
         }
-        DEBUG_PRINT("<begin dump text>");
-        print_unicode(text, 0);
-        DEBUG_PRINT("<end dump text>\n");
+        //DEBUG_PRINT("<begin dump text>");
+        //print_unicode(text, 0);
+        //DEBUG_PRINT("<end dump text>\n");
         
         //begin to analyse
         analyse_contents(ctx, doc, text);
@@ -562,192 +536,15 @@ fz_outline *pdf_load_outline_fixed(fz_context *ctx, fz_document *doc)
             text = new_text_form_page_number(ctx, doc, index, 1);
             if(!text)
             {
-                DEBUG_PRINT("get page%d error\n", index);
+                printf("get page%d error\n", index);
                 return NULL;
             }
-            DEBUG_PRINT("<begin dump text>");
-            print_unicode(text, 0);
-            DEBUG_PRINT("<end dump text>\n");
+            //DEBUG_PRINT("<begin dump text>");
+            //print_unicode(text, 0);
+            //DEBUG_PRINT("<end dump text>\n");
             free_text(text);
         }
     }
     
 	return NULL;
-}
-
-static int write_unicode(int fd, int *unicode)
-{
-    char t;
-    int pos;
-    int len = 0;
-    while(*(unicode+len)) len++;
-    
-    //spec: Text String Type need UTF-16BE
-    t = 0xfe;
-    write(fd, &t, 1);
-    t = 0xff;
-    write(fd, &t, 1);
-    
-    for (pos = 0; pos < len; pos++)
-    {
-        if(unicode[pos]<0x10000)
-        {
-            t = (unicode[pos] >> 8) & 0xff;
-            write(fd, &t, 1);
-            t = (unicode[pos]) & 0xff;
-            write(fd, &t, 1);
-        }
-        else
-        {
-            //not verify yet
-            int vh = ((unicode[pos] - 0x10000) & 0xFFC00) >> 10 ;
-            int vl =  (unicode[pos] - 0x10000) & 0x3ff;
-            short h  =  0xD800 | vh;
-            short l =  0xDC00 | vl;
-            write(fd, &h, 2); 
-            write(fd, &l, 2); 
-        }
-    }
-    
-    return 0;
-}
-
-int write_outline_to_new_pdf(char *inputfile, fz_context *ctx, fz_document *doc, fz_outline *outline)
-{
-    char c;
-    char outputfile[256] = {0};
-    strcat(outputfile, inputfile);
-    strcat(outputfile, ".out.pdf");
-    
-    int objn = pdf_count_objects(ctx,(pdf_document *)doc);
-    
-	int fd_in = open(inputfile, O_RDONLY);
-	if(fd_in < 0)
-	{
-		DEBUG_PRINT("open %s error\n", inputfile);
-		return -1;
-	}
-
-	int fd_out = open(outputfile, O_RDWR | O_CREAT);
-	if(fd_out < 0)
-	{
-		DEBUG_PRINT("open %s error\n", outputfile);
-		return -1;
-	} 
-
-    int total_outlines = 0;
-    fz_outline *p = outline;
-    while(p)
-    {
-        total_outlines++;
-        p = p->next;
-    }
-
-	int flag = 0;
-	while(read(fd_in, &c, 1)==1)
-	{
-        //get /Catalog 0x20 [0x0d]
-        if(c == 'C')
-        {
-            write(fd_out, &c, 1);
-            
-            char buf[6] = {0};
-            if(read(fd_in, buf, 6)!=6)
-            {
-                DEBUG_PRINT("read error\n");
-                return -1;
-            }
-            if(!memcmp(buf, "atalog", 6))
-            {
-                write(fd_out, buf, 6);
-                //1
-                DEBUG_PRINT("got Catalog\n");
-                char wbuf[32] = {0};
-                sprintf(wbuf, "\n/Outlines %d 0 R \n", objn);
-                write(fd_out, wbuf, strlen(wbuf));
-                write(fd_out, "/PageMode /UseOutlines\n", strlen("/PageMode /UseOutlines\n"));
-                flag = 1;
-            }
-            else
-            {
-                lseek(fd_in, -6, SEEK_CUR);
-            }
-        }
-        else if (c == 'e' && flag)
-        {
-            write(fd_out, &c, 1);
-            char buf[6] = {0};
-            if(read(fd_in, buf, 6)!=6)
-            {
-                DEBUG_PRINT("read error\n");
-                return -1;
-            }
-
-            if(!memcmp(buf, "ndobj", 5))
-            {
-                write(fd_out, buf, 6);
-                DEBUG_PRINT("got endobj\n");
-                char wbuf[256] = {0};
-                //2
-                sprintf(wbuf, "\n%d 0 obj \n", objn);
-                write(fd_out, wbuf, strlen(wbuf));
-
-                memset(wbuf,0,256);
-                sprintf(wbuf, "<<\n/Count %d \n/First %d 0 R \n/Last %d 0 R\n>>\nendobj \n", total_outlines, objn+1, objn+total_outlines);
-                write(fd_out, wbuf, strlen(wbuf));
-
-                //3
-                int index = 1;
-                p = outline;
-                while(p) 
-                {
-                    memset(wbuf,0,256);
-                    sprintf(wbuf, "%d 0 obj \n", objn+index);
-                    write(fd_out, wbuf, strlen(wbuf));
-
-                    write(fd_out, "<<\n/Title (", strlen("<<\n/Title ("));
-
-                    DEBUG_PRINT("add (");
-                    print_unicode(utf8_to_unicode(p->title),0);
-                    DEBUG_PRINT("<-->%d)\n", p->dest.ld.gotor.page);
-                    //write unicode of text
-                    write_unicode(fd_out, utf8_to_unicode(p->title));
-
-                    memset(wbuf,0,256);
-                    if(index == 1)
-                    {
-                        sprintf(wbuf, ")\n/Dest [%d /Fit]\n/Parent %d 0 R \n/Next %d 0 R \n>>\nendobj\n", 
-                                        p->dest.ld.gotor.page, objn, objn+index+1);
-                    }
-                    else if(index == total_outlines)
-                    {
-                        sprintf(wbuf, ")\n/Dest [%d /Fit]\n/Parent %d 0 R \n/Prev %d 0 R \n>>\nendobj\n", 
-                                        p->dest.ld.gotor.page, objn, objn+index-1);
-                    }
-                    else
-                    {
-                        sprintf(wbuf, ")\n/Dest [%d /Fit]\n/Parent %d 0 R \n/Next %d 0 R \n/Prev %d 0 R \n>>\nendobj\n", 
-                                        p->dest.ld.gotor.page, objn, objn+index+1, objn+index-1);
-                    }
-                    write(fd_out, wbuf, strlen(wbuf));
-
-                    p = p->next;
-                    index++;
-                }
-                flag = 0;
-            }
-            else
-            {
-                lseek(fd_in, -6, SEEK_CUR);
-            }
-        }
-        else
-        {
-            write(fd_out, &c, 1);
-        }
-	}
-
-	close(fd_in);
-	close(fd_out);
-    return 0;
 }
