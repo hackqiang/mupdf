@@ -1,20 +1,26 @@
+#include <string.h>
+
 #include <mupdf/fitz.h>
 #include <mupdf/pdf.h>
 
+#define MAX_KEYWORD_LEN 256
 
-static int write_unicode(int fd, int *unicode)
+extern int *utf8_to_unicode(char *utf8, int *uni, int uni_len);
+extern void print_unicode(int *unicode, int len);
+
+static int write_unicode_as_UTF_16BE(int fd, int *unicode)
 {
     char t;
     int pos;
     int len = 0;
     while(*(unicode+len)) len++;
-    
+
     //spec: Text String Type need UTF-16BE
     t = 0xfe;
     write(fd, &t, 1);
     t = 0xff;
     write(fd, &t, 1);
-    
+
     for (pos = 0; pos < len; pos++)
     {
         if(unicode[pos]<0x10000)
@@ -31,41 +37,14 @@ static int write_unicode(int fd, int *unicode)
             int vl =  (unicode[pos] - 0x10000) & 0x3ff;
             short h  =  0xD800 | vh;
             short l =  0xDC00 | vl;
-            write(fd, &h, 2); 
-            write(fd, &l, 2); 
+            write(fd, &h, 2);
+            write(fd, &l, 2);
         }
     }
-    
+
     return 0;
 }
 
-static void print_unicode(int *unicode, int len)
-{
-    int pos;
-    if(len==0)
-        while(*(unicode+len)) len++;
-    
-    for (pos = 0; pos < len && unicode[pos]; pos++)
-    {
-        char temp[4] = {0};
-        fz_runetochar(temp,unicode[pos]);
-        printf("%s", temp);
-    }
-}
-
-//todo: fix later
-// size < MAX_KEYWORD_LEN
-static int uni[128] = {0};
-static int *utf8_to_unicode(char *utf8)
-{
-    int *unicode = uni;
-    memset(unicode, 0, 128);
-    while (*utf8)
-    {
-        utf8 += fz_chartorune(unicode++, (char *)utf8);
-    }
-    return uni;
-}
 
 //TODO: fix 222.pdf
 int write_new_pdf(char *inputfile, char *outputfile, fz_context *ctx, fz_document *doc, fz_outline *outline, char *title, char *author)
@@ -78,6 +57,7 @@ int write_new_pdf(char *inputfile, char *outputfile, fz_context *ctx, fz_documen
     
     int infoobj, outlineobj;
 
+    int uni[MAX_KEYWORD_LEN] = {0};
     
 	int fd_in = open(inputfile, O_RDONLY);
 	if(fd_in < 0)
@@ -103,7 +83,7 @@ int write_new_pdf(char *inputfile, char *outputfile, fz_context *ctx, fz_documen
         outlineobj = objn;
     }
     
-    if(title && author)
+    if(*title && *author)
     {
         infoflag = 1;
         infoobj = objn;
@@ -236,7 +216,7 @@ int write_new_pdf(char *inputfile, char *outputfile, fz_context *ctx, fz_documen
                         //print_unicode(utf8_to_unicode(p->title),0);
                         //printf("<-->%d)\n", p->dest.ld.gotor.page);
                         //write unicode of text
-                        write_unicode(fd_out, utf8_to_unicode(p->title));
+                        write_unicode_as_UTF_16BE(fd_out, utf8_to_unicode(p->title, uni, MAX_KEYWORD_LEN));
 
                         memset(wbuf,0,WBUF_SIZE);
                         if(index == 1)
@@ -264,12 +244,22 @@ int write_new_pdf(char *inputfile, char *outputfile, fz_context *ctx, fz_documen
                 
                 if (infoflag == 1)
                 {
-                    printf("infoflag\n");
-                   
+                    printf("infoflag %s %s\n", author, title);
+
                     memset(wbuf,0,WBUF_SIZE);
-                    sprintf(wbuf, "\n%d 0 obj \n<<\n/Author (%s)\n/Title (%s)\n>>\nendobj \n", infoobj, author, title);
+                    sprintf(wbuf, "\n%d 0 obj \n<<\n/Author (", infoobj);
                     write(fd_out, wbuf, strlen(wbuf));
-                    infoflag = 2;
+                    int *u = utf8_to_unicode(author, uni, MAX_KEYWORD_LEN);
+                    write_unicode_as_UTF_16BE(fd_out, u);
+                    
+                    write(fd_out, ")\n/Title (", strlen(")\n/Title ("));
+                    
+                    u = utf8_to_unicode(title, uni, MAX_KEYWORD_LEN);
+                    write_unicode_as_UTF_16BE(fd_out, u);
+                    
+                    write(fd_out, ")\n>>\nendobj \n", strlen(")\n>>\nendobj \n"));
+
+                    infoflag = 2; 
                 }
                 
             }
@@ -289,7 +279,57 @@ int write_new_pdf(char *inputfile, char *outputfile, fz_context *ctx, fz_documen
     return 0;
 }
 
+int parse_from_json(char *infofile, char *title, char *author)
+{
+    FILE *f = fopen(infofile, "r");
+	if(!f)
+	{
+		printf("open %s error\n", infofile);
+		return -1;
+	}
+    
+    char line[1024] = {0};
+    while(fgets(line, 1024, f))
+    {
+        printf("%s", line);
+        
+        
+        int name_start = 0;
+        while(line[name_start]&& line[name_start] != '"') name_start++;
+        name_start++;
+        
+        int name_end = name_start+1;
+        while(line[name_end]&& line[name_end] != '"') name_end++;
+        
+        int value_start = name_end+1;
+        while(line[value_start]&& line[value_start] != '"') value_start++;
+        value_start++;
+    
+        int value_end = value_start+1;
+        while(line[value_end]&& line[value_end] != '"') value_end++;    
+        
+        char name[128] = {0};
+        char value[128] = {0};
+        
+        memcpy(name, line + name_start, name_end - name_start);
+        memcpy(value, line + value_start, value_end - value_start);
+        
+        printf("<%s><%s>\n", name, value);
+        
+        if(!memcmp(name, "Title", strlen("Title")))
+            memcpy(title, value, strlen(value));
+        
+        if(!memcmp(name, "Author", strlen("Author")))
+            memcpy(author, value, strlen(value));
 
+        memset(line,0, 1024);
+    }
+    
+    if(*author && *title)
+        return 0;
+    
+    return -1;
+}
 
 int main(int argc, char **argv)
 {
@@ -336,20 +376,25 @@ int main(int argc, char **argv)
 		return EXIT_FAILURE;
 	}
     
-    char *title = NULL, *author = NULL;
+    char title[128] = {0}, author[128] = {0};
 	obj = pdf_dict_get(ctx, pdf_trailer(ctx, (pdf_document *)doc), PDF_NAME_Info);
 	if (obj)
 	{
-		printf("Info object (%d %d R):\n", pdf_to_num(ctx, obj), pdf_to_gen(ctx, obj));
+		printf("Info object (%d %d R)\n", pdf_to_num(ctx, obj), pdf_to_gen(ctx, obj));
+        //maybe /Info has no title and author, ignore now
 	}
     else
     {
-        //no Info
-        //1. read form info.txt
-        title = "test title";
-        author = "test author";
-        //2. parse form pdf file
-        
+        //1. read from info.json
+        if(infofile && !parse_from_json(infofile, title, author))
+        {
+            printf("get info form %s success\n", infofile);
+        }
+        else
+        {
+            //2. parse form pdf file
+            pdf_parse_title_author(ctx, doc, title, author);
+        }   
     }
     
     fz_outline *outline = pdf_load_outline_origin(ctx, doc);

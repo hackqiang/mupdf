@@ -304,7 +304,7 @@ INSTALL_APPS := $(MUTOOL) $(MUVIEW) $(MUJSTEST) $(MUVIEW_CURL)
 
 # --- Examples ---
 
-examples: $(OUT)/example $(OUT)/multi-threaded $(OUT)/outline-test $(OUT)/genthumb-test
+examples: $(OUT)/example $(OUT)/multi-threaded $(OUT)/pdf-fix $(OUT)/genthumb-test
 
 $(OUT)/example: docs/example.c $(MUPDF_LIB) $(THIRD_LIBS)
 	$(LINK_CMD) $(CFLAGS)

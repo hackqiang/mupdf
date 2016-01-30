@@ -669,3 +669,196 @@ pdf_repair_obj_stms(fz_context *ctx, pdf_document *doc)
 			fz_throw(ctx, FZ_ERROR_GENERIC, "invalid reference to non-object-stream: %d (%d 0 R)", (int)entry->ofs, i);
 	}
 }
+
+#define DUMP_DEBUG_PRINT
+#define DEBUG_PRINT printf
+#define SERACH_MAX_PAGE 5
+
+#define MAX_KEYWORD_LEN 256
+#define KEYWORKS_NUM 256
+#define MAX_CHAPTER_LEN 256 //char *
+
+extern int *utf8_to_unicode(char *utf8, int *uni, int uni_len);
+extern void print_unicode(int *unicode, int len);
+extern char *unicode_to_utf8(int *unicode, int ulen, char *utf8, int utf8len);
+
+//图书在版编目（CIP）数据   亮剑 Java Web 项目开发案例导航 / 朱雪琴，常建功编著.—北京：电子工业出版社，
+//must encode as utf8
+static char info_start_keywords[KEYWORKS_NUM][MAX_KEYWORD_LEN] = 
+{
+    "图书在版编目（CIP）数据",
+    "图书在版编目（ＣＩＰ）数据",
+    "图书在版编目(ＣＩＰ)数据", 
+};
+static char info_mid_keyworks[KEYWORKS_NUM][MAX_KEYWORD_LEN] = 
+{
+    "/",
+    "／",
+};
+static char info_end_keyworks[KEYWORKS_NUM][MAX_KEYWORD_LEN] = 
+{
+    "—",
+};
+
+
+int pdf_parse_title_author(fz_context *ctx, fz_document *doc, char *title, char *author)
+{
+    printf("begin pdf_parse_title_author\n");
+    
+    fz_rect search_hit_bbox[32];
+    int count;
+    int current_page;
+    int index;
+    int *text = NULL;
+    int page_count;
+    int uni[MAX_KEYWORD_LEN] = {0};
+    
+    page_count = fz_count_pages(ctx, doc);
+    
+    count = 0;
+    for(current_page = 0; current_page < SERACH_MAX_PAGE && current_page < page_count; current_page++)
+    {
+        index = 0;
+        while(index < KEYWORKS_NUM && info_start_keywords[index][0])
+        {
+            DEBUG_PRINT("serach page%d (%s)\n", current_page, info_start_keywords[index]);
+            count = fz_search_page_number(ctx, doc, current_page, info_start_keywords[index], search_hit_bbox, 32);
+            if(count)
+            {
+                DEBUG_PRINT("found page%d (%s) %d times\n", current_page,info_start_keywords[index],count);
+                fz_text_sheet *sheet = fz_new_text_sheet(ctx);
+                fz_text_page *text = fz_new_text_page_from_page_number(ctx, doc, current_page, sheet);
+                int text_len = textlen(ctx, text);
+                int *textbuf = (int *)malloc(sizeof(int)*(text_len+1));
+                if(!textbuf) 
+                {
+                    printf("malloc %d error\n", text_len+1);
+                    return -1;
+                }
+                memset(textbuf,0,sizeof(int)*(text_len+1));
+                int pos;
+                for(pos = 0; pos < text_len; pos++)
+                {
+                    fz_char_and_box cab;
+                    textbuf[pos] = fz_text_char_at(ctx, &cab, text, pos)->c;
+        #ifdef DUMP_DEBUG_PRINT
+                    if(!(pos%16)) printf("\n");
+                    printf("%04x ", textbuf[pos]);
+        #endif
+                }
+                fz_drop_text_page(ctx, text);
+                
+                print_unicode(textbuf, 0);
+                
+                int *match = utf8_to_unicode(info_start_keywords[index], uni, MAX_KEYWORD_LEN);
+
+                print_unicode(match, 0);
+                printf("\n");
+
+                int match_len = 0;
+                while(*(match+match_len)) match_len++;
+
+                int i;
+                for(i = 0; i < text_len; i++)
+                {
+                    if(textbuf[i] == match[0])
+                    {
+                        int m = 1;
+                        while(m < match_len && textbuf[i + m] == match[m]) m++;
+                        if(m == match_len)
+                        {
+                            break;
+                        }
+                    }
+                }
+                
+                int info_mid, info_end;
+                int info_start = i + match_len;
+                
+                if(textbuf[info_start] == utf8_to_unicode("   ", uni, MAX_KEYWORD_LEN)[0] || textbuf[info_start] == utf8_to_unicode(" ", uni, MAX_KEYWORD_LEN)[0])
+                {
+                    printf("remove space\n");
+                    info_start++;
+                }
+                
+                printf("info_start %d\n", info_start);
+                
+                
+                int kindex = 0;
+                int flag = 0;
+                while(!flag && kindex < KEYWORKS_NUM && info_mid_keyworks[kindex][0])
+                {
+                    //got mid, book title
+                    match = utf8_to_unicode(info_mid_keyworks[kindex], uni, MAX_KEYWORD_LEN);
+
+                    for(i = info_start; i < text_len; i++)
+                    {
+                        if(textbuf[i] == match[0])
+                        {
+                            flag = 1;
+                            info_mid = i;
+                            break;
+                        }
+                    }
+                    kindex++;
+                }
+                if(!flag)
+                {
+                    printf("no found mid flag");
+                    return -1;
+                }
+                printf("info_mid %d\n", info_mid);
+                
+                printf("title\n");
+                print_unicode(textbuf+info_start, info_mid - info_start);
+                printf("\n");
+                
+                kindex = 0;
+                flag = 0;
+                while(!flag && kindex < KEYWORKS_NUM && info_end_keyworks[kindex][0])
+                {
+                    //got mid, book title
+                    match = utf8_to_unicode(info_end_keyworks[kindex], uni, MAX_KEYWORD_LEN);
+
+                    for(i = info_mid; i < text_len; i++)
+                    {
+                        if(textbuf[i] == match[0])
+                        {
+                            flag = 1;
+                            info_end = i-1;
+                            break;
+                        }
+                    }
+                    kindex++;
+                }
+                if(!flag)
+                {
+                    printf("no found end flag");
+                    return -1;
+                }
+                printf("info_end %d\n", info_end);
+                
+                if(textbuf[info_end] == utf8_to_unicode(".", uni, MAX_KEYWORD_LEN)[0])
+                {
+                    printf("remove .\n");
+                    info_end--;
+                }
+                
+                printf("author\n");
+                print_unicode(textbuf+info_mid+1, info_end - info_mid);
+                printf("\n");
+                
+                unicode_to_utf8(textbuf+info_start, info_mid - info_start, title, 128);
+                unicode_to_utf8(textbuf+info_mid+1, info_end - info_mid, author, 128);
+                
+                printf("title:%s\n", title);
+                printf("author:%s\n", author);
+                
+                return 0;
+            }
+            index++;
+        }
+    }
+
+	return -1;
+}

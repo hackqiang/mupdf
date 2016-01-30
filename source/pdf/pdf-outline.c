@@ -97,9 +97,9 @@ pdf_load_outline_origin(fz_context *ctx, pdf_document *doc)
 #define DEBUG_PRINT printf
 
 #define SERACH_MAX_PAGE 24
-#define MAX_KEYWORD_LEN 128
-#define KEYWORKS_NUM 128
-#define MAX_CHAPTER_LEN 128 //char *
+#define MAX_KEYWORD_LEN 256
+#define KEYWORKS_NUM 256
+#define MAX_CHAPTER_LEN 256 //char *
 
 //must encode as utf8
 static char chapter_keywords[KEYWORKS_NUM][MAX_KEYWORD_LEN] = 
@@ -112,7 +112,7 @@ static char chapter_keywords[KEYWORKS_NUM][MAX_KEYWORD_LEN] =
 static fz_outline *first_node = NULL;
 
 //get form mupdf code
-static int textlen(fz_context *ctx, fz_text_page *page)
+int textlen(fz_context *ctx, fz_text_page *page)
 {
 	int len = 0;
 	int block_num;
@@ -150,14 +150,14 @@ static int unicode_to_int(int *unicode)
     return num;
 }
 
-static char *unicode_to_utf8(int *unicode, char *utf8, int utf8len)
+char *unicode_to_utf8(int *unicode, int ulen, char *utf8, int utf8len)
 {
     int pos;
     int ui = 0;
-    int len=0;
-    while(*(unicode+len)) len++;
+    if(ulen == 0)
+        while(*(unicode+ulen)) ulen++;
     
-    for (pos = 0; pos < len && unicode[pos]; pos++)
+    for (pos = 0; pos < ulen && unicode[pos]; pos++)
     {
         
         char temp[4] = {0};
@@ -172,7 +172,7 @@ static char *unicode_to_utf8(int *unicode, char *utf8, int utf8len)
     return utf8;
 }
 
-static void print_unicode(int *unicode, int len)
+void print_unicode(int *unicode, int len)
 {
     int pos;
     if(len==0)
@@ -186,13 +186,12 @@ static void print_unicode(int *unicode, int len)
     }
 }
 
-//todo: fix later
-// size < MAX_KEYWORD_LEN
-static int uni[MAX_KEYWORD_LEN/4] = {0};
-static int *utf8_to_unicode(char *utf8)
+
+
+int *utf8_to_unicode(char *utf8, int *uni, int uni_len)
 {
     int *unicode = uni;
-    memset(unicode, 0, MAX_KEYWORD_LEN);
+    memset(uni, 0, uni_len*4);
     while (*utf8)
     {
         utf8 += fz_chartorune(unicode++, (char *)utf8);
@@ -347,7 +346,7 @@ static int parse_chapter_info(fz_context *ctx, fz_document *doc, int *txt, int l
 
     fz_outline *node = fz_new_outline(ctx); //already memset 0
     
-    node->title = unicode_to_utf8(title, utf8_title, MAX_CHAPTER_LEN);
+    node->title = unicode_to_utf8(title, 0, utf8_title, MAX_CHAPTER_LEN);
     
     node->dest.kind = FZ_LINK_GOTO;
     node->dest.ld.gotor.flags = fz_link_flag_fit_h | fz_link_flag_fit_v;
@@ -397,6 +396,7 @@ static int search(int *text, int *match)
 static int analyse_contents(fz_context *ctx, fz_document *doc, int *text)
 {
     int j = 0;
+    int uni[MAX_KEYWORD_LEN] = {0};
     while(j < KEYWORKS_NUM && chapter_keywords[j][0])
     {
         //DEBUG_PRINT("searching %s\n", chapter_keywords[j]);
@@ -404,7 +404,7 @@ static int analyse_contents(fz_context *ctx, fz_document *doc, int *text)
         int pre_pos = -1;
         int *tt = text;
         //根据关键字，分割得到一行行的章节信息
-        while((pos = search(tt, utf8_to_unicode(chapter_keywords[j]))) >= 0)
+        while((pos = search(tt, utf8_to_unicode(chapter_keywords[j], uni, MAX_KEYWORD_LEN))) >= 0)
         {
             //DEBUG_PRINT("get %s %d\n", chapter_keywords[j], pos);
             if(pre_pos >= 0)
