@@ -45,9 +45,18 @@ static int write_unicode_as_UTF_16BE(int fd, int *unicode)
     return 0;
 }
 
+int parse_obj(char *buf)
+{
+    char *p = buf;
+    if(strstr(buf, "obj"))
+    {
+        return atoi(buf);
+    }
+    return 0;
+}
 
 //TODO: fix 222.pdf
-int write_new_pdf(char *inputfile, char *outputfile, fz_context *ctx, fz_document *doc, fz_outline *outline, char *title, char *author)
+int write_new_pdf(char *inputfile, char *outputfile, fz_context *ctx, fz_document *doc, fz_outline *outline, int infoobj, char *title, char *author)
 {
     char c;
     int outlinesflag = 0; //0: no outlines; 1:has outlines; 2:add outline objects finish;
@@ -55,7 +64,7 @@ int write_new_pdf(char *inputfile, char *outputfile, fz_context *ctx, fz_documen
     
     int objn = pdf_count_objects(ctx, (pdf_document *)doc);
     
-    int infoobj, outlineobj;
+    int outlineobj;
 
     int uni[MAX_KEYWORD_LEN] = {0};
     
@@ -85,12 +94,15 @@ int write_new_pdf(char *inputfile, char *outputfile, fz_context *ctx, fz_documen
     
     if(*title && *author)
     {
+        if(!infoobj)
+        {
+            infoobj = objn;
+            outlineobj = objn + 1;
+        }
         infoflag = 1;
-        infoobj = objn;
-        outlineobj = objn + 1;
     }
 
-    printf("outlinesflag %d\ninfoflag %d\n", outlinesflag, infoflag);
+    printf("outlinesflag %d\ninfoflag %d\ninfoobj %d\n", outlinesflag, infoflag, infoobj);
     
     #define WBUF_SIZE 2014
 	char wbuf[WBUF_SIZE];
@@ -122,7 +134,7 @@ int write_new_pdf(char *inputfile, char *outputfile, fz_context *ctx, fz_documen
                 lseek(fd_in, -6, SEEK_CUR);
             }
         }
-        else if (c == 't' && infoflag)
+        else if (c == 't' && infoflag && infoobj==objn)
         {
             write(fd_out, &c, 1);
             
@@ -177,8 +189,8 @@ int write_new_pdf(char *inputfile, char *outputfile, fz_context *ctx, fz_documen
         else if (c == 'e')
         {              
             write(fd_out, &c, 1);
-            char buf[6] = {0};
-            if(read(fd_in, buf, 6)!=6)
+            char buf[5] = {0};
+            if(read(fd_in, buf, 5)!=5)
             {
                 printf("read error\n");
                 return -1;
@@ -186,7 +198,13 @@ int write_new_pdf(char *inputfile, char *outputfile, fz_context *ctx, fz_documen
 
             if(!memcmp(buf, "ndobj", 5))
             {
-                write(fd_out, buf, 6);
+                write(fd_out, buf, 5);
+                
+                //check next obj num
+                int readn = read(fd_in, buf, 32);
+                int currentobj = parse_obj(buf);
+                lseek(fd_in, -readn, SEEK_CUR);
+                //printf("n%d\n", currentobj);
                 
                 if (outlinesflag == 1)
                 {
@@ -244,28 +262,124 @@ int write_new_pdf(char *inputfile, char *outputfile, fz_context *ctx, fz_documen
                 
                 if (infoflag == 1)
                 {
-                    printf("infoflag %s %s\n", author, title);
+                                     
+                    //add an new obj
+                    if(infoobj == objn)
+                    {
+                        printf("infoflag %s %s\n", author, title);
+                        
+                        memset(wbuf,0,WBUF_SIZE);
+                        sprintf(wbuf, "\n%d 0 obj \n<<\n/Author (", infoobj);
+                        write(fd_out, wbuf, strlen(wbuf));
 
-                    memset(wbuf,0,WBUF_SIZE);
-                    sprintf(wbuf, "\n%d 0 obj \n<<\n/Author (", infoobj);
-                    write(fd_out, wbuf, strlen(wbuf));
-                    int *u = utf8_to_unicode(author, uni, MAX_KEYWORD_LEN);
-                    write_unicode_as_UTF_16BE(fd_out, u);
-                    
-                    write(fd_out, ")\n/Title (", strlen(")\n/Title ("));
-                    
-                    u = utf8_to_unicode(title, uni, MAX_KEYWORD_LEN);
-                    write_unicode_as_UTF_16BE(fd_out, u);
-                    
-                    write(fd_out, ")\n>>\nendobj \n", strlen(")\n>>\nendobj \n"));
+                        write_unicode_as_UTF_16BE(fd_out, utf8_to_unicode(author, uni, MAX_KEYWORD_LEN));
+                        
+                        write(fd_out, ")\n/Title (", strlen(")\n/Title ("));
 
-                    infoflag = 2; 
+                        write_unicode_as_UTF_16BE(fd_out, utf8_to_unicode(title, uni, MAX_KEYWORD_LEN));
+                        
+                        write(fd_out, ")\n>>\nendobj \n", strlen(")\n>>\nendobj \n"));
+
+                        infoflag = 2;
+                    }
+                    else 
+                    {
+                        //modify current info object
+                        int has_title = 0;
+                        int has_author = 0;
+                        
+                        if(infoobj == currentobj)
+                        {
+                            printf("infoflag %s %s\n", author, title);
+                            printf("need to modify obj %d for add title and author\n", infoobj);
+                            
+                            while(read(fd_in, &c, 1)==1)
+                            {
+                                if(c=='/')
+                                {
+                                    write(fd_out, &c, 1);
+                                    char buf[5] = {0};
+                                    if(read(fd_in, buf, 5)!=5)
+                                    {
+                                        printf("read error\n");
+                                        return -1;
+                                    }
+
+                                    if(!memcmp(buf, "Title", 5))
+                                    {
+                                        has_title = 1;
+                                    }
+                                    if(!memcmp(buf, "Autho", 5))
+                                    {
+                                        has_author = 1;
+                                    }
+                                    write(fd_out, buf, 5);
+                                }
+                                else if(c=='e')
+                                {
+                                    
+                                    char buf[5] = {0};
+                                    if(read(fd_in, buf, 5)!=5)
+                                    {
+                                        printf("read error\n");
+                                        return -1;
+                                    }
+
+                                    if(!memcmp(buf, "ndobj", 5))
+                                    {
+                                        write(fd_out, "endobj", strlen("endobj"));
+                                        break;
+                                    }
+                                    else
+                                    {
+                                        write(fd_out, &c, 1);
+                                        lseek(fd_in, -5, SEEK_CUR);
+                                    }
+                                }
+                                else if(c=='>')
+                                {
+                                    if(read(fd_in, &c, 1)!=1)
+                                    {
+                                        printf("read error\n");
+                                        return -1;
+                                    }
+
+                                    if(c=='>')
+                                    {
+                                        if(!has_title)
+                                        {                                           
+                                            write(fd_out, "\n/Title (", strlen("\n/Title ("));
+                                            write_unicode_as_UTF_16BE(fd_out, utf8_to_unicode(title, uni, MAX_KEYWORD_LEN));
+                                            write(fd_out, ")\n", strlen(")\n"));
+                                        }
+                                        if(!has_author)
+                                        {
+                                            write(fd_out, "\n/Author (", strlen("\n/Author ("));
+                                            write_unicode_as_UTF_16BE(fd_out, utf8_to_unicode(author, uni, MAX_KEYWORD_LEN));
+                                            write(fd_out, ")\n", strlen(")\n"));
+                                        }
+                                        write(fd_out, ">>", strlen(">>"));
+                                    }
+                                    else
+                                    {
+                                        c = '>';
+                                        write(fd_out, &c, 1);
+                                        lseek(fd_in, -1, SEEK_CUR);
+                                    }
+                                }
+                                else
+                                {
+                                    write(fd_out, &c, 1);
+                                }
+                            }
+                        }
+                    }
                 }
                 
             }
             else
             {
-                lseek(fd_in, -6, SEEK_CUR);
+                lseek(fd_in, -5, SEEK_CUR);
             }
         }
         else
@@ -377,25 +491,24 @@ int main(int argc, char **argv)
 	}
     
     char title[128] = {0}, author[128] = {0};
+    int infoobj = 0;
 	obj = pdf_dict_get(ctx, pdf_trailer(ctx, (pdf_document *)doc), PDF_NAME_Info);
 	if (obj)
 	{
 		printf("Info object (%d %d R)\n", pdf_to_num(ctx, obj), pdf_to_gen(ctx, obj));
-        //maybe /Info has no title and author, ignore now
+        infoobj = pdf_to_num(ctx, obj);
 	}
+
+    //1. read from info.json
+    if(infofile && !parse_from_json(infofile, title, author))
+    {
+        printf("get info form %s success\n", infofile);
+    }
     else
     {
-        //1. read from info.json
-        if(infofile && !parse_from_json(infofile, title, author))
-        {
-            printf("get info form %s success\n", infofile);
-        }
-        else
-        {
-            //2. parse form pdf file
-            pdf_parse_title_author(ctx, doc, title, author);
-        }   
-    }
+        //2. parse form pdf file
+        pdf_parse_title_author(ctx, doc, title, author);
+    }   
     
     fz_outline *outline = pdf_load_outline_origin(ctx, doc);
     if(!outline)
@@ -406,16 +519,9 @@ int main(int argc, char **argv)
     {
         //already has outline objects, no need fix
         outline = NULL;
-        
-        //alread has /Info
-        if(obj)
-        {
-            printf("both outline and /Info exist, skip fix\n");
-            return 0;
-        }
     }
     
-    write_new_pdf(inputfile, outputfile, ctx, doc, outline, title, author);
+    write_new_pdf(inputfile, outputfile, ctx, doc, outline, infoobj, title, author);
     
     fz_drop_outline(ctx, outline);
 	fz_drop_document(ctx, doc);
