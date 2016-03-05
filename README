@@ -1,13 +1,19 @@
-pdf-fix:
-1. generate contents form pdf;
-2. add title and author info form extern json file or parse from pdf
+add custom functions for mupdf
+1. pdf-fix:
+    a. generate contents form pdf;
+    b. add title and author info form extern json file or parse from pdf
 
-usage:
-make examples
-build/debug/pdf-fix sample/121.decrypted.pdf out.pdf
-or 
-build/debug/pdf-fix sample/121.decrypted.pdf out.pdf docs/info.json
+    usage:
+        make examples
+        build/debug/pdf-fix sample/121.decrypted.pdf out.pdf
+        or 
+        build/debug/pdf-fix sample/121.decrypted.pdf out.pdf docs/info.json
 
+2. add fz_gen_thumb_image support
+
+3. pdf_bound_page_fix:
+    strip white space in pdf
+        
 ABOUT
 
 MuPDF is a lightweight PDF, XPS, EPUB and CBZ viewer and parser/rendering
