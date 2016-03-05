@@ -386,6 +386,88 @@ pdf_bound_page(fz_context *ctx, pdf_page *page, fz_rect *bounds)
 	return bounds;
 }
 
+fz_rect *
+pdf_bound_page_fix(fz_context *ctx, pdf_page *page, fz_rect *bounds)
+{
+    fz_matrix mtx;
+    fz_irect ibounds;
+    fz_cookie cookie = { 0 };
+    fz_rect mediabox = page->mediabox;
+    fz_transform_rect(&mediabox, fz_rotate(&mtx, page->rotate));
+    bounds->x0 = bounds->y0 = 0;
+    bounds->x1 = mediabox.x1 - mediabox.x0;
+    bounds->y1 = mediabox.y1 - mediabox.y0;
+
+    fz_round_rect(&ibounds, fz_transform_rect(bounds, &mtx));
+
+    //printf("bounds %f %f %f %f\n", bounds->x0, bounds->y0, bounds->x1, bounds->y1);
+    //printf("ibounds %d %d %d %d\n", ibounds.x0, ibounds.y0, ibounds.x1, ibounds.y1);
+
+    //just use gray color is enough
+    fz_colorspace *colorspace = fz_device_gray(ctx);
+
+    fz_pixmap *image = fz_new_pixmap_with_bbox(ctx, colorspace, &ibounds);
+    fz_clear_pixmap_with_value(ctx, image, 0xff);
+
+    fz_device *dev = fz_new_draw_device(ctx, image);
+    fz_run_page(ctx, page, dev, &mtx, &cookie);
+
+    int image_w = fz_pixmap_width(ctx, image);
+    int image_h = fz_pixmap_height(ctx, image);
+    int image_n = fz_pixmap_components(ctx, image);
+    unsigned char *image_samples = fz_pixmap_samples(ctx, image);
+
+    //debug: save pixmap to file
+    //char *outfile = "out.pixmap";
+    //fz_output *out = fz_new_output_to_filename(ctx, outfile);
+    //fz_write(ctx, out, image_samples, image_w*image_h*image_n);
+    //fz_drop_output(ctx, out);
+    //debug end
+
+    int i, j;
+    int startx = bounds->x1, starty = bounds->y1;
+    int endx = 0, endy = 0;
+    for(i = 0;i<image_w;i++)
+    {
+        for(j = 0;j<image_h;j++)
+        {
+            if(*(image_samples + (j*image_w+i)*image_n)!=0xff)
+            {
+                if(starty>j) starty = j;
+                if(startx>i) startx = i;
+                if(endy<j) endy = j;
+                if(endx<i) endx = i;
+            }
+        }
+    }
+    printf("%d %d %d %d\n", startx, starty, endx, endy);
+
+    fz_drop_device(ctx, dev);
+    fz_drop_pixmap(ctx, image);
+    
+    //left 5% white space
+    int white_pct = 5;
+    float wleft = (endx - startx)*white_pct/100;
+    float hleft = (endy - starty)*white_pct/100;
+
+    bounds->x0 = startx;
+    if(bounds->x0 > wleft)
+        bounds->x0 -= wleft;
+    
+    bounds->y0 = starty;
+    if(bounds->y0 > hleft)
+        bounds->y0 -= hleft;
+    
+    if(endx + wleft < bounds->x1)
+        bounds->x1 = endx + wleft;
+        
+    if(endy + hleft < bounds->y1)
+        bounds->y1 = endy + hleft;
+    
+    return bounds;
+}
+
+
 fz_link *
 pdf_load_links(fz_context *ctx, pdf_page *page)
 {

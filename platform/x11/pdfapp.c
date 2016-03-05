@@ -682,7 +682,8 @@ static void pdfapp_loadpage(pdfapp_t *app, int no_cache)
 	{
 		app->page = fz_load_page(app->ctx, app->doc, app->pageno - 1);
 
-		fz_bound_page(app->ctx, app->page, &app->page_bbox);
+		//fz_bound_page(app->ctx, app->page, &app->page_bbox);
+		pdf_bound_page_fix(app->ctx, app->page, &app->page_bbox);
 	}
 	fz_catch(app->ctx)
 	{
