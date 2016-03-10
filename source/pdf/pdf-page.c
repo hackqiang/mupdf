@@ -387,13 +387,14 @@ pdf_bound_page(fz_context *ctx, pdf_page *page, fz_rect *bounds)
 }
 
 fz_rect *
-pdf_bound_page_fix(fz_context *ctx, pdf_page *page, fz_rect *bounds)
+fz_bound_page_fix(fz_context *ctx, fz_page *page, fz_rect *bounds)
 {
     fz_matrix mtx;
     fz_irect ibounds;
     fz_cookie cookie = { 0 };
-    fz_rect mediabox = page->mediabox;
-    fz_transform_rect(&mediabox, fz_rotate(&mtx, page->rotate));
+    fz_rect mediabox;
+	fz_bound_page(ctx, page, &mediabox);
+    fz_transform_rect(&mediabox, fz_rotate(&mtx, 0));
     bounds->x0 = bounds->y0 = 0;
     bounds->x1 = mediabox.x1 - mediabox.x0;
     bounds->y1 = mediabox.y1 - mediabox.y0;
@@ -444,7 +445,7 @@ pdf_bound_page_fix(fz_context *ctx, pdf_page *page, fz_rect *bounds)
 
     fz_drop_device(ctx, dev);
     fz_drop_pixmap(ctx, image);
-    
+
     //left 5% white space
     int white_pct = 5;
     float wleft = (endx - startx)*white_pct/100;
@@ -453,17 +454,17 @@ pdf_bound_page_fix(fz_context *ctx, pdf_page *page, fz_rect *bounds)
     bounds->x0 = startx;
     if(bounds->x0 > wleft)
         bounds->x0 -= wleft;
-    
+
     bounds->y0 = starty;
     if(bounds->y0 > hleft)
         bounds->y0 -= hleft;
-    
+
     if(endx + wleft < bounds->x1)
         bounds->x1 = endx + wleft;
-        
+
     if(endy + hleft < bounds->y1)
         bounds->y1 = endy + hleft;
-    
+
     return bounds;
 }
 

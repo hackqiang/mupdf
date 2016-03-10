@@ -909,7 +909,30 @@ static void pdfapp_showpage(pdfapp_t *app, int loadpage, int drawpage, int repai
 			sprintf(buf, "%s%s", app->doctitle, buf2);
 		wintitle(app, buf);
 
-		pdfapp_viewctm(&ctm, app);
+		/*
+		 * fix the screen size to 480x720
+		 */
+		fz_irect screen;
+		screen.x0 = 0;
+		screen.y0 = 0;
+		screen.x1 = 480;
+		screen.y1 = 720;
+
+		// calc resolution zoom
+		float zoom1 = app->resolution/72.0f;
+		float zoom2;
+		// calc size(in pixel) zoom
+		float t1 = screen.x1/((app->page_bbox.x1-app->page_bbox.x0)*zoom1);
+		zoom2 = screen.y1/((app->page_bbox.y1-app->page_bbox.y0)*zoom1);
+		if(t1<zoom2)
+			zoom2 = t1;
+
+		screen.x0 = app->page_bbox.x0*zoom1*zoom2;
+		screen.y0 = app->page_bbox.y0*zoom1*zoom2;
+		screen.x1 += screen.x0;
+		screen.y1 += screen.y0;
+
+		fz_scale(&ctm, zoom1*zoom2, zoom1*zoom2);
 		bounds = app->page_bbox;
 		fz_round_rect(&ibounds, fz_transform_rect(&bounds, &ctm));
 		fz_rect_from_irect(&bounds, &ibounds);
@@ -922,7 +945,8 @@ static void pdfapp_showpage(pdfapp_t *app, int loadpage, int drawpage, int repai
 		else
 			colorspace = app->colorspace;
 		app->image = NULL;
-		app->image = fz_new_pixmap_with_bbox(app->ctx, colorspace, &ibounds);
+
+		app->image = fz_new_pixmap_with_bbox(app->ctx, colorspace, &screen);
 		fz_clear_pixmap_with_value(app->ctx, app->image, 255);
 		if (app->page_list || app->annotations_list)
 		{
