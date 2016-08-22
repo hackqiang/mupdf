@@ -517,8 +517,25 @@ int main(int argc, char **argv)
     }
     else
     {
-        //already has outline objects, no need fix
-        outline = NULL;
+        int total_outlines = 0;
+        fz_outline *p = outline;
+        while(p)
+        {
+            total_outlines++;
+            p = p->next;
+        }
+        
+        if(total_outlines > 3) {
+            printf("already has outline objects, no need fix\n");
+            outline = NULL;
+        } 
+        else 
+        {
+            printf("origin outline seems not well, try to fix\n");
+            outline = pdf_load_outline_fixed(ctx, doc);
+        }
+        
+
     }
     
     write_new_pdf(inputfile, outputfile, ctx, doc, outline, infoobj, title, author);
