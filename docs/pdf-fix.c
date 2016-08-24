@@ -190,6 +190,22 @@ int get_last_child_index(fz_outline *outlines)
     return p->refs;
 }
 
+fz_outline *add_fixed_outline(fz_context *ctx, fz_outline *outline)
+{
+    fz_outline *node = fz_new_outline(ctx);
+    if(!node) {
+        return outline;
+    }
+    node->title = "目录";
+    node->dest.kind = FZ_LINK_GOTO;
+    node->dest.ld.gotor.flags = fz_link_flag_fit_h | fz_link_flag_fit_v;
+    node->dest.ld.gotor.page = 1;
+    node->dest.ld.gotor.dest = NULL;
+    node->next = outline;
+    node->down = NULL;
+    
+    return node;
+}
 
 fz_outline *load_outline(fz_context *ctx, const char *contentfile)
 {
@@ -812,8 +828,14 @@ int main(int argc, char **argv)
             printf("parse outline from pdf\n");
             outline = pdf_load_outline_fixed(ctx, doc);
         }
+        
+        outline = add_fixed_outline(ctx, outline);
+        
         make_outline_index(outline);
         print_outline(outline);
+        
+        
+        
     }
 
     write_new_pdf(inputfile, outputfile, ctx, doc, outline, infoobj, title, author);
