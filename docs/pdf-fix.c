@@ -27,8 +27,12 @@ static int write_unicode_as_UTF_16BE(int fd, int *unicode)
         {
             t = (unicode[pos] >> 8) & 0xff;
             write(fd, &t, 1);
+            if(t == 0x5c)
+                write(fd, &t, 1);
             t = (unicode[pos]) & 0xff;
             write(fd, &t, 1);
+            if(t == 0x5c)
+                write(fd, &t, 1);
         }
         else
         {
