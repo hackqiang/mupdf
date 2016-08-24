@@ -1,14 +1,16 @@
 add custom functions for mupdf
 1. pdf-fix:
-    a. generate contents form pdf;
-    b. add title and author info form extern json file or parse from pdf
+    a. parse contents form pdf or from outlines.txt;
+    b. parse title and author info from pdf
 
     usage:
         make examples
         build/debug/pdf-fix sample/121.decrypted.pdf out.pdf
         or 
-        build/debug/pdf-fix sample/121.decrypted.pdf out.pdf docs/info.json
+        build/debug/pdf-fix sample/121.decrypted.pdf out.pdf docs/outlines.txt
 
+    the outlines.txt should be encoded as UTF-8 no BOM
+        
 2. add fz_gen_thumb_image support
 
 3. pdf_bound_page_fix:
