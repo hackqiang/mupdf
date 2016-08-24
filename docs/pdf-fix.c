@@ -55,6 +55,241 @@ int parse_obj(char *buf)
     return 0;
 }
 
+int get_outline_totals(fz_outline *outline)
+{
+    if(!outline)
+        return 0;
+    
+    int total_outlines = 0;
+    fz_outline *p = outline;
+    while(p)
+    {
+        total_outlines++;
+        fz_outline *q = p->down;
+        while(q) {
+            total_outlines++;
+            q = q->next;
+        }
+        p = p->next;
+    }
+    
+    return total_outlines;
+}
+
+
+int print_outline(fz_outline *outline)
+{
+    if(!outline)
+        return 0;
+
+    printf("outline:\n");
+    
+    fz_outline *p = outline;
+    while(p)
+    {
+        printf("(%d)%s\n", p->refs, p->title);
+        fz_outline *q = p->down;
+        while(q) {
+            printf("\t(%d)%s\n", q->refs,q->title);
+            q = q->next;
+            
+        }
+        p = p->next;
+    }
+    
+    return 0;
+}
+
+
+int make_outline_index(fz_outline *outline)
+{
+    //reuse p->refs for store the obj index
+
+    //printf("outline:\n");
+    
+    int index = 1;
+    fz_outline *p = outline;
+    while(p)
+    {
+        //printf("%s\n", p->title);
+        p->refs = index;
+        fz_outline *q = p->down;
+        index++;
+        while(q) {
+            //printf("\t%s\n", q->title);
+            q->refs = index;
+            q = q->next;
+            index++;
+        }
+        p = p->next;
+    }
+    
+    return 0;
+}
+
+int get_last_index(fz_outline *outline)
+{
+    fz_outline *p = outline;
+    while(p && p->next) 
+    {
+        p = p->next;
+    }
+    
+    return p->refs;
+}
+
+int get_pre_index(fz_outline *outline, fz_outline *p)
+{
+    fz_outline *q = outline;
+    fz_outline *pre = outline;
+    while(q && q!=p) 
+    {
+        pre = q;
+        q = q->next;
+    }
+    printf("pre%d\n", pre->refs);
+    return pre->refs;
+}
+
+int get_next_index(fz_outline *outline, fz_outline *p)
+{
+    if(p->next)
+        return p->next->refs;
+    
+    return 0;
+}
+
+int get_children_total(fz_outline *outline)
+{
+    fz_outline *p = outline->down;
+    
+    int n = 0;
+    while(p) 
+    {
+        n++;
+        p = p->next;
+    }
+    
+    return n;
+}
+
+int get_first_child_index(fz_outline *outlines)
+{
+    return outlines->down->refs;
+}
+
+int get_last_child_index(fz_outline *outlines)
+{
+    fz_outline *p = outlines->down;
+
+    while(p && p->next) 
+    {
+        p = p->next;
+    }
+    
+    return p->refs;
+}
+
+
+fz_outline *load_outline(fz_context *ctx, const char *contentfile)
+{
+    
+
+    FILE *f = fopen(contentfile, "r");
+	if(!f)
+	{
+		printf("open %s error\n", contentfile);
+		return -1;
+	}
+    
+    char line[1024] = {0};
+    char title[1024] = {0};
+    int pagen;
+    
+    fz_outline *first_node = NULL;
+    
+    
+    
+    while(fgets(line, 1024, f))
+    {
+
+        //printf("%s", line);
+        
+        fz_outline *node = fz_new_outline(ctx);
+        if(!node) {
+            return NULL;
+        }
+
+        int children = 0;
+        if(line[0] == ' ')
+        {
+            children = 1;
+            //printf("children\n");
+        }
+        
+        char *p = strstr(line, "<->");
+        if(p)
+        {
+            memcpy(title, line, strlen(line) - strlen(p));
+            pagen = atoi(p+3)-1;
+            
+            //printf("%s(%d)\n", title, pagen);
+            
+            node->title = (char *)malloc(strlen(title)+1);
+            if(!node->title) {
+                return NULL;
+            }
+            memset(node->title, 0, strlen(title)+1);
+            
+            memcpy(node->title, title, strlen(title)+1);
+            node->dest.kind = FZ_LINK_GOTO;
+            node->dest.ld.gotor.flags = fz_link_flag_fit_h | fz_link_flag_fit_v;
+            node->dest.ld.gotor.page = pagen;
+            node->dest.ld.gotor.dest = NULL;
+            node->next = NULL;
+            node->down = NULL;
+            
+            
+            if(!first_node)
+            {
+                first_node = node;
+            }
+            else
+            {
+                fz_outline *p = first_node;
+                while(p->next) p = p->next;
+                //printf("x%s\n", p->title);
+                if(children)
+                {
+                    if(p->down)
+                    {
+                        fz_outline *q = p->down;
+                        while(q->next) q = q->next;
+                        q->next = node;
+                    }
+                    else
+                    {
+                        p->down = node;
+                    }
+                    
+                }
+                else
+                {
+                    p->next = node;
+                }
+                
+            }
+        }
+        
+        memset(line, 0, 1024);
+        memset(title, 0, 1024);
+    }
+        
+    return first_node;
+}
+
+
+
 //TODO: fix 222.pdf
 int write_new_pdf(char *inputfile, char *outputfile, fz_context *ctx, fz_document *doc, fz_outline *outline, int infoobj, char *title, char *author)
 {
@@ -82,15 +317,17 @@ int write_new_pdf(char *inputfile, char *outputfile, fz_context *ctx, fz_documen
 		return -1;
 	} 
 
-    int total_outlines = 0;
+    int total_parents = 0;
+    int total_outlines = get_outline_totals(outline);
     fz_outline *p = outline;
     while(p)
     {
-        total_outlines++;
+        total_parents++;
         p = p->next;
         outlinesflag = 1;
         outlineobj = objn;
     }
+    
     
     if(*title && *author)
     {
@@ -208,19 +445,20 @@ int write_new_pdf(char *inputfile, char *outputfile, fz_context *ctx, fz_documen
                 
                 if (outlinesflag == 1)
                 {
-                    printf("outlinesflag\n");
+                    //printf("outlinesflag\n");
                     //2
                     memset(wbuf,0,WBUF_SIZE);
                     sprintf(wbuf, "\n%d 0 obj \n", outlineobj);
                     write(fd_out, wbuf, strlen(wbuf));
 
                     memset(wbuf,0,WBUF_SIZE);
-                    sprintf(wbuf, "<<\n/Count %d \n/First %d 0 R \n/Last %d 0 R\n>>\nendobj \n", total_outlines, outlineobj+1, outlineobj+total_outlines);
-                    printf("%s",wbuf);
+                    sprintf(wbuf, "<<\n/Count %d \n/First %d 0 R \n/Last %d 0 R\n>>\nendobj \n", total_outlines, outlineobj+1, outlineobj+get_last_index(outline));
+                    //printf("%s",wbuf);
                     write(fd_out, wbuf, strlen(wbuf));
 
                     //3
                     int index = 1;
+                    int parent_index = 1;
                     p = outline;
                     while(p) 
                     {
@@ -235,28 +473,81 @@ int write_new_pdf(char *inputfile, char *outputfile, fz_context *ctx, fz_documen
                         //printf("<-->%d)\n", p->dest.ld.gotor.page);
                         //write unicode of text
                         write_unicode_as_UTF_16BE(fd_out, utf8_to_unicode(p->title, uni, MAX_KEYWORD_LEN));
+                        
+                        write(fd_out, ")\n", strlen(")\n"));
+                        
+                        int child_n = get_children_total(p);
+                        if(child_n)
+                        {
+                            memset(wbuf,0,WBUF_SIZE);
+                            sprintf(wbuf, "/Count %d \n/First %d 0 R \n/Last %d 0 R\n", child_n, outlineobj+get_first_child_index(p), outlineobj+get_last_child_index(p));
+                            //printf("%s",wbuf);
+                            write(fd_out, wbuf, strlen(wbuf));
+                        }
 
                         memset(wbuf,0,WBUF_SIZE);
-                        if(index == 1)
+                        if(parent_index == 1)
                         {
-                            sprintf(wbuf, ")\n/Dest [%d /Fit]\n/Parent %d 0 R \n/Next %d 0 R \n>>\nendobj\n", 
-                                            p->dest.ld.gotor.page, outlineobj, outlineobj+index+1);
+                            sprintf(wbuf, "/Dest [%d /Fit]\n/Parent %d 0 R \n/Next %d 0 R \n>>\nendobj\n", 
+                                            p->dest.ld.gotor.page, outlineobj, outlineobj+get_next_index(outline, p));
                         }
-                        else if(index == total_outlines)
+                        else if(parent_index == total_parents)
                         {
-                            sprintf(wbuf, ")\n/Dest [%d /Fit]\n/Parent %d 0 R \n/Prev %d 0 R \n>>\nendobj\n", 
-                                            p->dest.ld.gotor.page, outlineobj, outlineobj+index-1);
+                            sprintf(wbuf, "/Dest [%d /Fit]\n/Parent %d 0 R \n/Prev %d 0 R \n>>\nendobj\n", 
+                                            p->dest.ld.gotor.page, outlineobj, outlineobj+get_pre_index(outline, p));
                         }
                         else
                         {
-                            sprintf(wbuf, ")\n/Dest [%d /Fit]\n/Parent %d 0 R \n/Next %d 0 R \n/Prev %d 0 R \n>>\nendobj\n", 
-                                            p->dest.ld.gotor.page, outlineobj, outlineobj+index+1, outlineobj+index-1);
+                            sprintf(wbuf, "/Dest [%d /Fit]\n/Parent %d 0 R \n/Next %d 0 R \n/Prev %d 0 R \n>>\nendobj\n", 
+                                            p->dest.ld.gotor.page, outlineobj, outlineobj+get_next_index(outline, p), outlineobj+get_pre_index(outline, p));
                         }
+                        //printf("%s",wbuf);
                         write(fd_out, wbuf, strlen(wbuf));
-
-                        p = p->next;
+                        int parent_objn = outlineobj+index;
+                        
                         index++;
+                        
+                        fz_outline *q = p->down;
+                        int children_index = 1;
+                        while(q)
+                        {
+                            memset(wbuf,0,WBUF_SIZE);
+                            sprintf(wbuf, "%d 0 obj \n", outlineobj+index);
+                            write(fd_out, wbuf, strlen(wbuf));
+
+                            write(fd_out, "<<\n/Title (", strlen("<<\n/Title ("));
+
+                            write_unicode_as_UTF_16BE(fd_out, utf8_to_unicode(q->title, uni, MAX_KEYWORD_LEN));
+                            
+                            //printf("1%s\n", q->title);
+                            memset(wbuf,0,WBUF_SIZE);
+                            if(children_index == 1)
+                            {
+                                sprintf(wbuf, ")\n/Dest [%d /Fit]\n/Parent %d 0 R \n/Next %d 0 R \n>>\nendobj\n", 
+                                                q->dest.ld.gotor.page, parent_objn, outlineobj+index+1);
+                            }
+                            else if(children_index == child_n)
+                            {
+                                sprintf(wbuf, ")\n/Dest [%d /Fit]\n/Parent %d 0 R \n/Prev %d 0 R \n>>\nendobj\n", 
+                                                q->dest.ld.gotor.page, parent_objn, outlineobj+index-1);
+                            }
+                            else
+                            {
+                                sprintf(wbuf, ")\n/Dest [%d /Fit]\n/Parent %d 0 R \n/Next %d 0 R \n/Prev %d 0 R \n>>\nendobj\n", 
+                                                q->dest.ld.gotor.page, parent_objn, outlineobj+index+1, outlineobj+index-1);
+                            }
+                            //printf("%s\n", wbuf);
+                            write(fd_out, wbuf, strlen(wbuf));
+                            children_index++;
+                            index++;
+                            q = q->next;
+                        }
+                        
+                        
+                        p = p->next;
+                        parent_index++;
                     }
+
                     outlinesflag = 2;
                 }
                 
@@ -445,22 +736,23 @@ int parse_from_json(char *infofile, char *title, char *author)
     return -1;
 }
 
+
 int main(int argc, char **argv)
 {
-	char *inputfile, *outputfile, *infofile = NULL;
+	char *inputfile, *outputfile, *contentfile = NULL;
 	fz_context *ctx;
 	fz_document *doc;
     pdf_obj *obj;
 
 	if(argc < 3)
 	{
-		fprintf(stderr, "usage: build/debug/pdf-fix input_pdf output_pdf [info.json]\n");
+		fprintf(stderr, "usage: build/debug/pdf-fix input_pdf output_pdf [contentfile]\n");
 		return EXIT_FAILURE;
 	}
 	inputfile = argv[1];
     outputfile = argv[2];
     if(argc == 4)
-        infofile = argv[3];
+        contentfile = argv[3];
     
 	/* Create a context to hold the exception stack and various caches. */
 	ctx = fz_new_context(NULL, NULL, FZ_STORE_UNLIMITED);
@@ -499,48 +791,34 @@ int main(int argc, char **argv)
         infoobj = pdf_to_num(ctx, obj);
 	}
 
-    //1. read from info.json
-    if(infofile && !parse_from_json(infofile, title, author))
-    {
-        printf("get info form %s success\n", infofile);
-    }
-    else
-    {
-        //2. parse form pdf file
-        pdf_parse_title_author(ctx, doc, title, author);
-    }   
+    //parse form pdf file
+    pdf_parse_title_author(ctx, doc, title, author);
     
     fz_outline *outline = pdf_load_outline_origin(ctx, doc);
-    if(!outline)
+    if(outline)
     {
-        outline = pdf_load_outline_fixed(ctx, doc);
+        printf("outline already exist in pdf\n");
+        outline = NULL;
     }
     else
     {
-        int total_outlines = 0;
-        fz_outline *p = outline;
-        while(p)
+        if(contentfile)
         {
-            total_outlines++;
-            p = p->next;
+            printf("load outline from %s\n", contentfile);
+            outline = load_outline(ctx, contentfile);
         }
-        
-        if(total_outlines > 3) {
-            printf("already has outline objects, no need fix\n");
-            outline = NULL;
-        } 
-        else 
+        else
         {
-            printf("origin outline seems not well, try to fix\n");
+            printf("parse outline from pdf\n");
             outline = pdf_load_outline_fixed(ctx, doc);
         }
-        
-
+        make_outline_index(outline);
+        print_outline(outline);
     }
-    
+
     write_new_pdf(inputfile, outputfile, ctx, doc, outline, infoobj, title, author);
     
-    fz_drop_outline(ctx, outline);
+    //fz_drop_outline(ctx, outline);
 	fz_drop_document(ctx, doc);
 	fz_drop_context(ctx);
 	return 0;
